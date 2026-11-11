@@ -10,7 +10,10 @@
 
   Wall detected on the right  -> move forward and hold the same
                                  distance from the wall
-  Wall NOT detected           -> stop
+  Wall lost while moving      -> look about 15 degrees right, then
+                                 about 15 degrees left; if the wall
+                                 is seen again, carry on forward,
+                                 otherwise stop
 
   The robot holds 10 cm from the wall by changing only the right
   motor (the one calibrated at 73):
@@ -90,8 +93,14 @@ int STEER_SIGN = 1;
 // Lower = smoother but slower to react.
 float SMOOTHING = 0.5;
 
-// Readings in a row without a wall before stopping.
+// Readings in a row without a wall before the robot starts searching.
 int MISS_LIMIT = 2;
+
+// How long the robot spins to turn about 15 degrees (milliseconds).
+// There is no angle sensor, so this is set by time:
+// turns too far    -> decrease
+// turns too little -> increase
+int SEARCH_TURN_MS = 120;
 
 // ==========================================
 // MOTOR CALIBRATION (UNCHANGED)
@@ -167,6 +176,104 @@ float getDistance() {
   }
 
   return duration * 0.0343 / 2.0;
+}
+
+// ==========================================
+// SPIN ON THE SPOT
+// ==========================================
+
+void spinRight() {
+
+  // Left motor forward, right motor backward
+
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+
+  analogWrite(ENA, LEFT_BASE_PWM);
+  analogWrite(ENB, RIGHT_BASE_PWM);
+}
+
+void spinLeft() {
+
+  // Left motor backward, right motor forward
+
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
+
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+
+  analogWrite(ENA, LEFT_BASE_PWM);
+  analogWrite(ENB, RIGHT_BASE_PWM);
+}
+
+// ==========================================
+// SPIN FOR A GIVEN TIME WHILE WATCHING THE SENSOR
+// Returns true (and stops spinning) as soon as the wall is seen
+// ==========================================
+
+bool spinAndLook(bool toRight, int durationMs) {
+
+  if (toRight) {
+    spinRight();
+  } else {
+    spinLeft();
+  }
+
+  unsigned long start = millis();
+
+  while (millis() - start < (unsigned long)durationMs) {
+
+    float d = getDistance();
+
+    if (d > 0 && d <= WALL_DETECT_DISTANCE) {
+      stopMotors();
+      smoothDistance = d;
+      return true;
+    }
+
+    delay(10);
+  }
+
+  stopMotors();
+  delay(100);
+
+  return false;
+}
+
+// ==========================================
+// SEARCH FOR THE WALL
+// About 15 degrees right, then about 15 degrees left of the
+// original heading. Returns true if the wall was found.
+// ==========================================
+
+bool searchForWall() {
+
+  stopMotors();
+  delay(100);
+
+  Serial.println("WALL LOST - SEARCHING RIGHT");
+
+  if (spinAndLook(true, SEARCH_TURN_MS)) {
+    return true;
+  }
+
+  Serial.println("WALL LOST - SEARCHING LEFT");
+
+  // Back through the centre and on to 15 degrees left
+  if (spinAndLook(false, 2 * SEARCH_TURN_MS)) {
+    return true;
+  }
+
+  // Not found: face forward again
+  spinAndLook(true, SEARCH_TURN_MS);
+
+  Serial.println("WALL NOT FOUND - STOP");
+
+  return false;
 }
 
 // ==========================================
@@ -273,8 +380,18 @@ void loop() {
     }
 
     if (missCount >= MISS_LIMIT) {
-      stopMotors();
-      moving = false;
+
+      if (moving && searchForWall()) {
+
+        // Wall found again: carry on forward from the next loop
+        missCount = 0;
+
+      } else {
+
+        stopMotors();
+        moving = false;
+      }
+
     } else if (moving) {
       moveForward(LEFT_BASE_PWM, RIGHT_BASE_PWM);
     }
