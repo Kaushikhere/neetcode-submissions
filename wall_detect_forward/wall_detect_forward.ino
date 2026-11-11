@@ -1,6 +1,6 @@
 /*
   ==========================================
-       WALL DETECT -> MOVE FORWARD
+       WALL DETECT -> FORWARD + HOLD DISTANCE
        Raspberry Pi Pico + L298N
        6 Optocouplers (inverted PWM)
        Right-side HC-SR04
@@ -8,8 +8,13 @@
 
   BEHAVIOUR:
 
-  Wall detected on the right  -> move forward (straight)
-  Wall NOT detected           -> stop immediately
+  Wall detected on the right  -> move forward and hold the same
+                                 distance from the wall
+  Wall NOT detected           -> stop
+
+  The distance to hold is the distance measured at the moment the
+  robot starts moving. If the robot drifts away from the wall it
+  steers right; if it drifts towards the wall it steers left.
 
   MOTOR PINS (UNCHANGED):
 
@@ -53,12 +58,30 @@
 // ==========================================
 
 // A wall counts as "detected" when it is closer than this (cm).
-float WALL_DETECT_DISTANCE = 30.0;
+// Keep this well above the distance you start at, otherwise the
+// robot stops instead of steering back when it drifts away.
+float WALL_DETECT_DISTANCE = 50.0;
 
-// Number of readings in a row without a wall before stopping.
-// 1 = stop on the very first missed reading (fastest, but the robot
-//     may stutter if the HC-SR04 drops a single echo).
-// 2 = ignores one bad reading (still stops in well under 0.1 s).
+// Distance to hold from the wall (cm).
+// 0 = automatic: hold whatever distance the robot starts at.
+float FIXED_TARGET_DISTANCE = 0.0;
+
+// Steering strength: PWM change per cm of distance error.
+// Robot corrects too slowly  -> increase.
+// Robot zig-zags             -> decrease.
+float KP = 4.0;
+
+// Damping: PWM change per cm of distance change between readings.
+// Reduces zig-zag. Set to 0 to switch it off.
+float KD = 6.0;
+
+// No correction while the error is smaller than this (cm).
+float DEAD_BAND = 1.0;
+
+// Largest PWM change the steering may apply.
+int MAX_CORRECTION = 100;
+
+// Readings in a row without a wall before stopping.
 int MISS_LIMIT = 2;
 
 // ==========================================
@@ -74,6 +97,9 @@ int RIGHT_BASE_PWM = 73;
 
 int missCount = 0;
 bool moving = false;
+
+float targetDistance = 0;
+float lastError = 0;
 
 // ==========================================
 // MOTOR STOP
@@ -163,7 +189,7 @@ void setup() {
   delay(1000);
 
   Serial.println("==============================");
-  Serial.println(" WALL DETECT -> MOVE FORWARD");
+  Serial.println(" WALL DETECT + HOLD DISTANCE");
   Serial.println("==============================");
   Serial.println("Ready!");
 }
@@ -178,18 +204,70 @@ void loop() {
 
   bool wallDetected = (distance > 0 && distance <= WALL_DETECT_DISTANCE);
 
-  if (wallDetected) {
+  int leftPWM = LEFT_BASE_PWM;
+  int rightPWM = RIGHT_BASE_PWM;
 
-    // Wall on the right -> go straight with calibrated speeds
+  float error = 0;
+
+  if (wallDetected) {
 
     missCount = 0;
 
-    moveForward(LEFT_BASE_PWM, RIGHT_BASE_PWM);
-    moving = true;
+    // ----------------------------------------
+    // Starting to move: lock the distance to hold
+    // ----------------------------------------
+
+    if (!moving) {
+
+      if (FIXED_TARGET_DISTANCE > 0) {
+        targetDistance = FIXED_TARGET_DISTANCE;
+      } else {
+        targetDistance = distance;
+      }
+
+      lastError = distance - targetDistance;
+      moving = true;
+    }
+
+    // ----------------------------------------
+    // Steering
+    //
+    // error > 0 : drifted AWAY from the wall   -> steer RIGHT
+    // error < 0 : drifted TOWARDS the wall     -> steer LEFT
+    // ----------------------------------------
+
+    error = distance - targetDistance;
+
+    float change = error - lastError;
+    lastError = error;
+
+    float steer = KD * change;
+
+    if (abs(error) > DEAD_BAND) {
+      steer += KP * error;
+    }
+
+    int correction = constrain((int)steer, -MAX_CORRECTION, MAX_CORRECTION);
+
+    if (correction > 0) {
+
+      // Steer RIGHT: slow the right motor
+      rightPWM = RIGHT_BASE_PWM + correction;
+
+    } else if (correction < 0) {
+
+      // Steer LEFT: slow the left motor
+      leftPWM = LEFT_BASE_PWM - correction;
+    }
+
+    moveForward(leftPWM, rightPWM);
 
   } else {
 
-    // No wall -> stop as soon as the miss limit is reached
+    // ----------------------------------------
+    // No wall -> stop once the miss limit is reached.
+    // Until then keep driving straight on the base speeds.
+    // ----------------------------------------
 
     if (missCount < MISS_LIMIT) {
       missCount++;
@@ -198,8 +276,14 @@ void loop() {
     if (missCount >= MISS_LIMIT) {
       stopMotors();
       moving = false;
+    } else if (moving) {
+      moveForward(LEFT_BASE_PWM, RIGHT_BASE_PWM);
     }
   }
+
+  // ----------------------------------------
+  // SERIAL MONITOR
+  // ----------------------------------------
 
   Serial.print("Distance: ");
 
@@ -210,10 +294,19 @@ void loop() {
     Serial.print(" cm");
   }
 
-  Serial.print(" | Wall: ");
-  Serial.print(wallDetected ? "YES" : "NO");
+  Serial.print(" | Target: ");
+  Serial.print(targetDistance);
 
-  Serial.print(" | Motors: ");
+  Serial.print(" | Error: ");
+  Serial.print(error);
+
+  Serial.print(" | ENA: ");
+  Serial.print(moving ? leftPWM : 255);
+
+  Serial.print(" | ENB: ");
+  Serial.print(moving ? rightPWM : 255);
+
+  Serial.print(" | ");
   Serial.println(moving ? "FORWARD" : "STOPPED");
 
   delay(30);
