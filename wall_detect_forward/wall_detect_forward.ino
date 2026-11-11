@@ -15,11 +15,9 @@
                                  wall is seen again, carry on forward,
                                  otherwise stop
 
-  The robot holds 10 cm from the wall by changing only the right
-  motor (the one calibrated at 73):
-
-  Closer than 10 cm  -> right motor faster -> turns left
-  Further than 10 cm -> right motor slower -> turns right
+  The robot holds TARGET_DISTANCE from the wall by changing only
+  the right motor. Anywhere between TARGET_DISTANCE and
+  WALL_DETECT_DISTANCE it keeps driving and steers back.
 
   MOTOR PINS (UNCHANGED):
 
@@ -65,10 +63,10 @@
 // A wall counts as "detected" when it is closer than this (cm).
 // Keep this well above the distance you start at, otherwise the
 // robot stops instead of steering back when it drifts away.
-float WALL_DETECT_DISTANCE = 50.0;
+float WALL_DETECT_DISTANCE = 40.0;
 
 // Distance to hold from the wall (cm).
-float TARGET_DISTANCE = 10.0;
+float TARGET_DISTANCE = 15.0;
 
 // Steering strength: PWM change per cm of distance error.
 // Robot corrects too slowly  -> increase.
@@ -83,12 +81,6 @@ float DEAD_BAND = 1.0;
 // around its calibrated speed, so the robot can never spin in circles.
 int MAX_CORRECTION = 35;
 
-// Steering direction.
-//  1 = normal
-// -1 = reversed (use this if the robot steers AWAY from the
-//      distance it should hold instead of back towards it)
-int STEER_SIGN = 1;
-
 // Smoothing of the distance readings (0.0 - 1.0).
 // Lower = smoother but slower to react.
 float SMOOTHING = 0.5;
@@ -96,10 +88,12 @@ float SMOOTHING = 0.5;
 // Readings in a row without a wall before the robot starts searching.
 int MISS_LIMIT = 2;
 
-// Which way the robot turns to look for the wall.
+// Which way the robot turns to get back to the wall.
 //  1 = turn RIGHT
 // -1 = turn LEFT
-// If the robot turns the wrong way, change this value.
+// Used both for steering back when the robot is too far from the
+// wall and for the search turn when the wall is lost.
+// If the robot turns away from the wall, change this value.
 int SEARCH_DIRECTION = -1;
 
 // How long the robot spins to turn about 10 degrees (milliseconds).
@@ -113,7 +107,7 @@ int SEARCH_TURN_MS = 80;
 // ==========================================
 
 int LEFT_BASE_PWM = 0;
-int RIGHT_BASE_PWM = 73;
+int RIGHT_BASE_PWM = 72;
 
 // ==========================================
 // STATE
@@ -342,10 +336,10 @@ void loop() {
     // The left motor always stays on its calibrated speed.
     // Only the right motor is nudged around its calibrated speed:
     //
-    // error > 0 : further than 10 cm from the wall
-    //             -> right motor SLOWER (PWM above 73) -> steer RIGHT
-    // error < 0 : closer than 10 cm to the wall
-    //             -> right motor FASTER (PWM below 73) -> steer LEFT
+    // error > 0 : too far from the wall  -> turn TOWARDS the wall
+    // error < 0 : too close to the wall  -> turn AWAY from the wall
+    //
+    // "Towards the wall" is the direction set by SEARCH_DIRECTION.
     // ----------------------------------------
 
     error = smoothDistance - TARGET_DISTANCE;
@@ -354,7 +348,7 @@ void loop() {
 
     if (abs(error) > DEAD_BAND) {
       correction = constrain(
-        (int)(KP * error) * STEER_SIGN,
+        (int)(KP * error) * SEARCH_DIRECTION,
         -MAX_CORRECTION,
         MAX_CORRECTION
       );
