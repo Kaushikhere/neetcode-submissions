@@ -69,17 +69,25 @@ float FIXED_TARGET_DISTANCE = 0.0;
 // Steering strength: PWM change per cm of distance error.
 // Robot corrects too slowly  -> increase.
 // Robot zig-zags             -> decrease.
-float KP = 4.0;
-
-// Damping: PWM change per cm of distance change between readings.
-// Reduces zig-zag. Set to 0 to switch it off.
-float KD = 6.0;
+float KP = 2.0;
 
 // No correction while the error is smaller than this (cm).
 float DEAD_BAND = 1.0;
 
 // Largest PWM change the steering may apply.
-int MAX_CORRECTION = 100;
+// Kept small on purpose: the steering only nudges the right motor
+// around its calibrated speed, so the robot can never spin in circles.
+int MAX_CORRECTION = 35;
+
+// Steering direction.
+//  1 = normal
+// -1 = reversed (use this if the robot steers AWAY from the
+//      distance it should hold instead of back towards it)
+int STEER_SIGN = 1;
+
+// Smoothing of the distance readings (0.0 - 1.0).
+// Lower = smoother but slower to react.
+float SMOOTHING = 0.5;
 
 // Readings in a row without a wall before stopping.
 int MISS_LIMIT = 2;
@@ -99,7 +107,7 @@ int missCount = 0;
 bool moving = false;
 
 float targetDistance = 0;
-float lastError = 0;
+float smoothDistance = 0;
 
 // ==========================================
 // MOTOR STOP
@@ -225,40 +233,38 @@ void loop() {
         targetDistance = distance;
       }
 
-      lastError = distance - targetDistance;
+      smoothDistance = distance;
       moving = true;
     }
+
+    // Smooth the readings so one jumpy echo cannot jerk the robot
+    smoothDistance += SMOOTHING * (distance - smoothDistance);
 
     // ----------------------------------------
     // Steering
     //
-    // error > 0 : drifted AWAY from the wall   -> steer RIGHT
-    // error < 0 : drifted TOWARDS the wall     -> steer LEFT
+    // The left motor always stays on its calibrated speed.
+    // Only the right motor is nudged around its calibrated speed:
+    //
+    // error > 0 : drifted AWAY from the wall
+    //             -> right motor a little SLOWER -> steer RIGHT
+    // error < 0 : drifted TOWARDS the wall
+    //             -> right motor a little FASTER -> steer LEFT
     // ----------------------------------------
 
-    error = distance - targetDistance;
+    error = smoothDistance - targetDistance;
 
-    float change = error - lastError;
-    lastError = error;
-
-    float steer = KD * change;
+    int correction = 0;
 
     if (abs(error) > DEAD_BAND) {
-      steer += KP * error;
+      correction = constrain(
+        (int)(KP * error) * STEER_SIGN,
+        -MAX_CORRECTION,
+        MAX_CORRECTION
+      );
     }
 
-    int correction = constrain((int)steer, -MAX_CORRECTION, MAX_CORRECTION);
-
-    if (correction > 0) {
-
-      // Steer RIGHT: slow the right motor
-      rightPWM = RIGHT_BASE_PWM + correction;
-
-    } else if (correction < 0) {
-
-      // Steer LEFT: slow the left motor
-      leftPWM = LEFT_BASE_PWM - correction;
-    }
+    rightPWM = constrain(RIGHT_BASE_PWM + correction, 0, 255);
 
     moveForward(leftPWM, rightPWM);
 
