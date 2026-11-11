@@ -10,9 +10,9 @@
 
   Wall detected on the right  -> move forward and hold the same
                                  distance from the wall
-  Wall lost while moving      -> look about 15 degrees right, then
-                                 about 15 degrees left; if the wall
-                                 is seen again, carry on forward,
+  Wall lost while moving      -> turn about 10 degrees in ONE
+                                 direction (SEARCH_DIRECTION); if the
+                                 wall is seen again, carry on forward,
                                  otherwise stop
 
   The robot holds 10 cm from the wall by changing only the right
@@ -96,11 +96,17 @@ float SMOOTHING = 0.5;
 // Readings in a row without a wall before the robot starts searching.
 int MISS_LIMIT = 2;
 
-// How long the robot spins to turn about 15 degrees (milliseconds).
+// Which way the robot turns to look for the wall.
+//  1 = turn RIGHT
+// -1 = turn LEFT
+// If the robot turns the wrong way, change this value.
+int SEARCH_DIRECTION = 1;
+
+// How long the robot spins to turn about 10 degrees (milliseconds).
 // There is no angle sensor, so this is set by time:
 // turns too far    -> decrease
 // turns too little -> increase
-int SEARCH_TURN_MS = 120;
+int SEARCH_TURN_MS = 80;
 
 // ==========================================
 // MOTOR CALIBRATION (UNCHANGED)
@@ -246,8 +252,8 @@ bool spinAndLook(bool toRight, int durationMs) {
 
 // ==========================================
 // SEARCH FOR THE WALL
-// About 15 degrees right, then about 15 degrees left of the
-// original heading. Returns true if the wall was found.
+// Turns about 10 degrees in one direction only.
+// Returns true if the wall was found.
 // ==========================================
 
 bool searchForWall() {
@@ -255,21 +261,11 @@ bool searchForWall() {
   stopMotors();
   delay(100);
 
-  Serial.println("WALL LOST - SEARCHING RIGHT");
+  Serial.println("WALL LOST - SEARCHING");
 
-  if (spinAndLook(true, SEARCH_TURN_MS)) {
+  if (spinAndLook(SEARCH_DIRECTION > 0, SEARCH_TURN_MS)) {
     return true;
   }
-
-  Serial.println("WALL LOST - SEARCHING LEFT");
-
-  // Back through the centre and on to 15 degrees left
-  if (spinAndLook(false, 2 * SEARCH_TURN_MS)) {
-    return true;
-  }
-
-  // Not found: face forward again
-  spinAndLook(true, SEARCH_TURN_MS);
 
   Serial.println("WALL NOT FOUND - STOP");
 
