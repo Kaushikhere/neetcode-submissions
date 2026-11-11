@@ -100,7 +100,7 @@ int MISS_LIMIT = 2;
 //  1 = turn RIGHT
 // -1 = turn LEFT
 // If the robot turns the wrong way, change this value.
-int SEARCH_DIRECTION = 1;
+int SEARCH_DIRECTION = -1;
 
 // How long the robot spins to turn about 10 degrees (milliseconds).
 // There is no angle sensor, so this is set by time:
