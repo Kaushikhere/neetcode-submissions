@@ -12,9 +12,11 @@
                                  distance from the wall
   Wall NOT detected           -> stop
 
-  The distance to hold is the distance measured at the moment the
-  robot starts moving. If the robot drifts away from the wall it
-  steers right; if it drifts towards the wall it steers left.
+  The robot holds 10 cm from the wall by changing only the right
+  motor (the one calibrated at 73):
+
+  Closer than 10 cm  -> right motor faster -> turns left
+  Further than 10 cm -> right motor slower -> turns right
 
   MOTOR PINS (UNCHANGED):
 
@@ -63,13 +65,12 @@
 float WALL_DETECT_DISTANCE = 50.0;
 
 // Distance to hold from the wall (cm).
-// 0 = automatic: hold whatever distance the robot starts at.
-float FIXED_TARGET_DISTANCE = 0.0;
+float TARGET_DISTANCE = 10.0;
 
 // Steering strength: PWM change per cm of distance error.
 // Robot corrects too slowly  -> increase.
 // Robot zig-zags             -> decrease.
-float KP = 2.0;
+float KP = 5.0;
 
 // No correction while the error is smaller than this (cm).
 float DEAD_BAND = 1.0;
@@ -106,7 +107,6 @@ int RIGHT_BASE_PWM = 73;
 int missCount = 0;
 bool moving = false;
 
-float targetDistance = 0;
 float smoothDistance = 0;
 
 // ==========================================
@@ -222,17 +222,10 @@ void loop() {
     missCount = 0;
 
     // ----------------------------------------
-    // Starting to move: lock the distance to hold
+    // Starting to move: reset the smoothing
     // ----------------------------------------
 
     if (!moving) {
-
-      if (FIXED_TARGET_DISTANCE > 0) {
-        targetDistance = FIXED_TARGET_DISTANCE;
-      } else {
-        targetDistance = distance;
-      }
-
       smoothDistance = distance;
       moving = true;
     }
@@ -246,13 +239,13 @@ void loop() {
     // The left motor always stays on its calibrated speed.
     // Only the right motor is nudged around its calibrated speed:
     //
-    // error > 0 : drifted AWAY from the wall
-    //             -> right motor a little SLOWER -> steer RIGHT
-    // error < 0 : drifted TOWARDS the wall
-    //             -> right motor a little FASTER -> steer LEFT
+    // error > 0 : further than 10 cm from the wall
+    //             -> right motor SLOWER (PWM above 73) -> steer RIGHT
+    // error < 0 : closer than 10 cm to the wall
+    //             -> right motor FASTER (PWM below 73) -> steer LEFT
     // ----------------------------------------
 
-    error = smoothDistance - targetDistance;
+    error = smoothDistance - TARGET_DISTANCE;
 
     int correction = 0;
 
@@ -301,7 +294,7 @@ void loop() {
   }
 
   Serial.print(" | Target: ");
-  Serial.print(targetDistance);
+  Serial.print(TARGET_DISTANCE);
 
   Serial.print(" | Error: ");
   Serial.print(error);
