@@ -2,7 +2,7 @@
   IR LINE SENSOR TEST - motors stay OFF
 
   Left IR OUT  = GP0
-  Right IR OUT = GP1
+  Right IR OUT = GP0
 
   Open Serial Monitor at 115200 and move each sensor
   over white paper, then over the black line.
@@ -10,8 +10,8 @@
   on white and on black.
 */
 
-#define LEFT_IR  0
-#define RIGHT_IR 1
+#define LEFT_IR  1
+#define RIGHT_IR 0
 
 // Motor pins, only used to keep the motors stopped
 #define ENA 10
@@ -39,9 +39,9 @@ void setup() {
 }
 
 void loop() {
-  Serial.print("LEFT (GP0): ");
+  Serial.print("LEFT (GP1): ");
   Serial.print(digitalRead(LEFT_IR));
-  Serial.print("    RIGHT (GP1): ");
+  Serial.print("    RIGHT (GP0): ");
   Serial.println(digitalRead(RIGHT_IR));
   delay(200);
 }

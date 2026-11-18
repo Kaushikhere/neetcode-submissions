@@ -39,8 +39,8 @@
 
   LINE SENSORS:
 
-  Left IR  OUT = GP0
-  Right IR OUT = GP1
+  Left IR  OUT = GP1
+  Right IR OUT = GP0
 
   ENCODERS:
 
@@ -73,8 +73,8 @@
 // LINE SENSOR PINS
 // ==========================================
 
-#define LEFT_IR  0
-#define RIGHT_IR 1
+#define LEFT_IR  1
+#define RIGHT_IR 0
 
 // What the IR module outputs when it is over the BLACK line.
 // Most TCRT5000 modules give HIGH on black (their LED goes off).
