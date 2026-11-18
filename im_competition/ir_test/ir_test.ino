@@ -1,7 +1,7 @@
 /*
   IR LINE SENSOR TEST - motors stay OFF
 
-  Left IR OUT  = GP0
+  Left IR OUT  = GP1
   Right IR OUT = GP0
 
   Open Serial Monitor at 115200 and move each sensor
