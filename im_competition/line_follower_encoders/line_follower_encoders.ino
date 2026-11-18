@@ -44,8 +44,8 @@
 
   ENCODERS:
 
-  Left  encoder C1 = GP18, C2 = GP19
-  Right encoder C1 = GP20, C2 = GP21
+  Left  encoder C1 = GP20, C2 = GP21
+  Right encoder C1 = GP18, C2 = GP19
 
   CALIBRATED RAW PWM (UNCHANGED):
 
@@ -85,15 +85,17 @@
 // ENCODER PINS
 // ==========================================
 
-#define ENC_L_A 18   // left encoder C1
-#define ENC_L_B 19   // left encoder C2
-#define ENC_R_A 20   // right encoder C1
-#define ENC_R_B 21   // right encoder C2
+// The encoder plugged into GP18/GP19 is on the RIGHT motor,
+// and the one on GP20/GP21 is on the LEFT motor.
+#define ENC_L_A 20   // left encoder C1
+#define ENC_L_B 21   // left encoder C2
+#define ENC_R_A 18   // right encoder C1
+#define ENC_R_B 19   // right encoder C2
 
-// Same values as in encoder_test (-1 if that wheel counts down
-// while driving forward).
+// -1 if that wheel counts down while driving forward.
+// The right encoder counted down in your test, so it is -1.
 int LEFT_SIGN = 1;
-int RIGHT_SIGN = 1;
+int RIGHT_SIGN = -1;
 
 // How often the wheel speeds are compared (ms)
 unsigned long SPEED_CHECK_MS = 50;
