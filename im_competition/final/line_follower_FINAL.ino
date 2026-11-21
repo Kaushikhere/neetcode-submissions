@@ -56,7 +56,7 @@ int LEFT_BLACK_LEFT_PWM  = 200;   // left wheel
 int LEFT_BLACK_RIGHT_PWM = 0;     // right wheel
 
 // 3. RIGHT IR SEES BLACK (robot turns RIGHT)
-int RIGHT_BLACK_LEFT_PWM  = 10;    // left wheel
+int RIGHT_BLACK_LEFT_PWM  = 0;     // left wheel
 int RIGHT_BLACK_RIGHT_PWM = 200;  // right wheel
 
 // ##########################################################
