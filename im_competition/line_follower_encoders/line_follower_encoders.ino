@@ -23,14 +23,12 @@
 
   HOW IT STEERS
 
-  Both on white   -> straight: LEFT_STRAIGHT_RATE / RIGHT_STRAIGHT_RATE
-  Left on black   -> turn LEFT:  left wheel at LEFT_TURN_RATE,
-                                 right wheel at RIGHT_STRAIGHT_RATE
-  Right on black  -> turn RIGHT: right wheel at RIGHT_TURN_RATE,
-                                 left wheel at LEFT_STRAIGHT_RATE
-  Both on black   -> crossing line: straight
+  Both on white   -> straight       (STRAIGHT_... speeds)
+  Left on black   -> turn LEFT      (LEFT_BLACK_... speeds)
+  Right on black  -> turn RIGHT     (RIGHT_BLACK_... speeds)
+  Both on black   -> crossing line, straight speeds
 
-  Every speed is set separately for each wheel (see SPEEDS below).
+  All speeds are in the SPEED SETTINGS block just below.
 
   PINS
 
@@ -41,6 +39,27 @@
 
   Lower PWM = Faster, Higher PWM = Slower, 255 = Stop (inverted)
 */
+
+// ##########################################################
+//   SPEED SETTINGS  -  the only numbers you need to change
+//
+//   Speed unit = encoder counts per 50 ms
+//   (about 60 = full speed, 0 = stopped)
+// ##########################################################
+
+// 1. GOING STRAIGHT (both IR sensors on white)
+float STRAIGHT_LEFT_SPEED  = 40;
+float STRAIGHT_RIGHT_SPEED = 40;
+
+// 2. LEFT IR SEES BLACK (robot turns LEFT)
+float LEFT_BLACK_LEFT_SPEED  = 12;   // left wheel
+float LEFT_BLACK_RIGHT_SPEED = 40;   // right wheel
+
+// 3. RIGHT IR SEES BLACK (robot turns RIGHT)
+float RIGHT_BLACK_LEFT_SPEED  = 40;  // left wheel
+float RIGHT_BLACK_RIGHT_SPEED = 12;  // right wheel
+
+// ##########################################################
 
 // ==========================================
 // MOTOR PINS
@@ -81,30 +100,9 @@
 int LEFT_SIGN = 1;
 int RIGHT_SIGN = -1;
 
-// ==========================================
-// SPEEDS (encoder counts per 50 ms)
-// ==========================================
-
-// Each wheel has its own numbers, so you can change one side
-// without touching the other.
-
-// Speed of each wheel at full power (your log showed about 60
-// counts/50ms with the wheels lifted). Used as the starting guess
-// for how much power a speed needs.
-float LEFT_MAX_RATE  = 60;
-float RIGHT_MAX_RATE = 60;
-
-// Straight speed of each wheel. Lower both if it overshoots curves.
-// Robot drifts right on a straight -> raise RIGHT or lower LEFT.
-float LEFT_STRAIGHT_RATE  = 40;
-float RIGHT_STRAIGHT_RATE = 40;
-
-// Inner wheel speed during a turn (slowed, never stopped).
-// LEFT_TURN_RATE  = left wheel while turning LEFT
-// RIGHT_TURN_RATE = right wheel while turning RIGHT
-// Runs off curves -> lower it. Wobbles -> raise it.
-float LEFT_TURN_RATE  = 12;
-float RIGHT_TURN_RATE = 12;
+// Full-power speed of a wheel (counts/50ms), used internally as the
+// starting guess for how much power a speed needs.
+float MAX_RATE = 60;
 
 // ==========================================
 // SPEED CONTROL
@@ -126,7 +124,6 @@ float BRAKE_MARGIN = 6;
 
 struct Wheel {
   float target = 0;     // wanted counts/50ms
-  float maxRate = 60;   // counts/50ms at full power
   float rate = 0;       // measured counts/50ms
   float integral = 0;
   float duty = 0;       // 0 = off, 1 = full power
@@ -183,7 +180,7 @@ void updateWheel(Wheel &w, long count) {
   if (w.rate > w.target + BRAKE_MARGIN) {
     w.brake = true;
     w.integral = 0;
-    w.duty = w.target / w.maxRate;
+    w.duty = w.target / MAX_RATE;
     return;
   }
 
@@ -192,7 +189,7 @@ void updateWheel(Wheel &w, long count) {
   w.integral += error;
   w.integral = constrain(w.integral, -150.0f, 150.0f);
 
-  w.duty = w.target / w.maxRate + KP_SPEED * error + KI_SPEED * w.integral;
+  w.duty = w.target / MAX_RATE + KP_SPEED * error + KI_SPEED * w.integral;
   w.duty = constrain(w.duty, 0.0f, 1.0f);
 }
 
@@ -302,24 +299,18 @@ void loop() {
   bool leftBlack  = (digitalRead(LEFT_IR)  == ON_BLACK);
   bool rightBlack = (digitalRead(RIGHT_IR) == ON_BLACK);
 
-  L.maxRate = LEFT_MAX_RATE;
-  R.maxRate = RIGHT_MAX_RATE;
-
   if (leftBlack && !rightBlack) {
-    L.target = LEFT_TURN_RATE;
-    R.target = RIGHT_STRAIGHT_RATE;
-    action = "TURN LEFT";
+    L.target = LEFT_BLACK_LEFT_SPEED;
+    R.target = LEFT_BLACK_RIGHT_SPEED;
+    action = "LEFT IR BLACK -> TURN LEFT";
   } else if (rightBlack && !leftBlack) {
-    L.target = LEFT_STRAIGHT_RATE;
-    R.target = RIGHT_TURN_RATE;
-    action = "TURN RIGHT";
-  } else if (leftBlack && rightBlack) {
-    L.target = LEFT_STRAIGHT_RATE;
-    R.target = RIGHT_STRAIGHT_RATE;
-    action = "CROSSING";
+    L.target = RIGHT_BLACK_LEFT_SPEED;
+    R.target = RIGHT_BLACK_RIGHT_SPEED;
+    action = "RIGHT IR BLACK -> TURN RIGHT";
   } else {
-    L.target = LEFT_STRAIGHT_RATE;
-    R.target = RIGHT_STRAIGHT_RATE;
+    // both white, or both black (crossing line)
+    L.target = STRAIGHT_LEFT_SPEED;
+    R.target = STRAIGHT_RIGHT_SPEED;
     action = "STRAIGHT";
   }
 
