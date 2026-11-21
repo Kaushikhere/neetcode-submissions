@@ -57,11 +57,13 @@ int STRAIGHT_LEFT_PWM  = 0;
 int STRAIGHT_RIGHT_PWM = 0;
 
 // 2. LEFT IR SEES BLACK (robot turns RIGHT)
+//    right wheel STOPS (255), left wheel full speed
 int LEFT_BLACK_LEFT_PWM  = 0;     // left wheel
-int LEFT_BLACK_RIGHT_PWM = 200;   // right wheel
+int LEFT_BLACK_RIGHT_PWM = 255;   // right wheel
 
 // 3. RIGHT IR SEES BLACK (robot turns LEFT)
-int RIGHT_BLACK_LEFT_PWM  = 200;  // left wheel
+//    left wheel STOPS (255), right wheel full speed
+int RIGHT_BLACK_LEFT_PWM  = 255;  // left wheel
 int RIGHT_BLACK_RIGHT_PWM = 0;    // right wheel
 
 // ##########################################################
