@@ -10,8 +10,8 @@
 
   On straight sections the code compares how far each wheel has
   turned and trims the right motor's PWM until both wheels turn at
-  the same rate. So the robot drives straight by itself, and the
-  0 / 73 calibration becomes only the starting point.
+  the same rate. So the robot drives straight by itself without a
+  hand calibration.
 
   Run encoder_test first: both counts must go UP when driving
   forward (fix with LEFT_SIGN / RIGHT_SIGN below).
@@ -47,10 +47,11 @@
   Left  encoder C1 = GP20, C2 = GP21
   Right encoder C1 = GP18, C2 = GP19
 
-  CALIBRATED RAW PWM (UNCHANGED):
+  BASE PWM:
 
-  Left motor  = 0
-  Right motor = 73
+  Both motors = 30 (your encoder log showed both motors turn at the
+  same speed for the same PWM, so no fixed offset is needed; the
+  encoder trim handles the rest)
 
   Lower PWM = Faster
   Higher PWM = Slower
@@ -112,17 +113,18 @@ int MAX_TRIM = 60;
 // SPEEDS (raw PWM, lower = faster, 255 = stop)
 // ==========================================
 
-// Straight: your calibration
-int LEFT_BASE_PWM  = 0;
-int RIGHT_BASE_PWM = 73;
+// Straight: same value on both motors. Not 0, so the encoder trim
+// has room to make the right motor faster as well as slower.
+int LEFT_BASE_PWM  = 30;
+int RIGHT_BASE_PWM = 30;
 
 // Turning: the wheel on the inside of the turn only slows down.
-// Both values give about 37% of straight speed on each motor.
+// Same value on both, because both motors behave the same.
 // Turns too gently (runs off curves) -> raise towards 255.
 // Turns too sharply (wobbles)        -> lower towards the base value.
 // Keep them below 255, or the wheel stops.
-int LEFT_SLOW_PWM  = 160;   // left wheel while turning LEFT
-int RIGHT_SLOW_PWM = 185;   // right wheel while turning RIGHT
+int LEFT_SLOW_PWM  = 170;   // left wheel while turning LEFT
+int RIGHT_SLOW_PWM = 170;   // right wheel while turning RIGHT
 
 // ==========================================
 // ENCODERS
