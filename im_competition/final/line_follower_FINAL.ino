@@ -53,7 +53,7 @@
 // ##########################################################
 
 // 1. GOING STRAIGHT (both IR sensors on white)
-int STRAIGHT_LEFT_PWM  = 73;
+int STRAIGHT_LEFT_PWM  = 0;
 int STRAIGHT_RIGHT_PWM = 0;
 
 // 2. LEFT IR SEES BLACK (robot turns RIGHT)
