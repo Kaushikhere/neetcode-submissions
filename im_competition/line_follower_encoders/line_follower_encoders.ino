@@ -24,8 +24,8 @@
   HOW IT STEERS
 
   Both on white   -> straight       (STRAIGHT_... values)
-  Left on black   -> turn LEFT      (LEFT_BLACK_... values)
-  Right on black  -> turn RIGHT     (RIGHT_BLACK_... values)
+  Left on black   -> turn RIGHT     (LEFT_BLACK_... values)
+  Right on black  -> turn LEFT      (RIGHT_BLACK_... values)
   Both on black   -> crossing line, straight values
 
   All speeds are in the SPEED SETTINGS block just below.
@@ -51,13 +51,13 @@
 int STRAIGHT_LEFT_PWM  = 73;
 int STRAIGHT_RIGHT_PWM = 0;
 
-// 2. LEFT IR SEES BLACK (robot turns LEFT)
-int LEFT_BLACK_LEFT_PWM  = 200;   // left wheel
-int LEFT_BLACK_RIGHT_PWM = 0;     // right wheel
+// 2. LEFT IR SEES BLACK (robot turns RIGHT)
+int LEFT_BLACK_LEFT_PWM  = 0;     // left wheel
+int LEFT_BLACK_RIGHT_PWM = 200;   // right wheel
 
-// 3. RIGHT IR SEES BLACK (robot turns RIGHT)
-int RIGHT_BLACK_LEFT_PWM  = 0;     // left wheel
-int RIGHT_BLACK_RIGHT_PWM = 200;  // right wheel
+// 3. RIGHT IR SEES BLACK (robot turns LEFT)
+int RIGHT_BLACK_LEFT_PWM  = 200;  // left wheel
+int RIGHT_BLACK_RIGHT_PWM = 0;    // right wheel
 
 // ##########################################################
 
@@ -308,11 +308,11 @@ void loop() {
   if (leftBlack && !rightBlack) {
     L.target = pwmToRate(LEFT_BLACK_LEFT_PWM);
     R.target = pwmToRate(LEFT_BLACK_RIGHT_PWM);
-    action = "LEFT IR BLACK -> TURN LEFT";
+    action = "LEFT IR BLACK -> TURN RIGHT";
   } else if (rightBlack && !leftBlack) {
     L.target = pwmToRate(RIGHT_BLACK_LEFT_PWM);
     R.target = pwmToRate(RIGHT_BLACK_RIGHT_PWM);
-    action = "RIGHT IR BLACK -> TURN RIGHT";
+    action = "RIGHT IR BLACK -> TURN LEFT";
   } else {
     // both white, or both black (crossing line)
     L.target = pwmToRate(STRAIGHT_LEFT_PWM);
