@@ -32,10 +32,15 @@
 
   PINS
 
-  Motors (through optocouplers): ENA GP10, IN1 GP11, IN2 GP12,
-                                 IN3 GP13, IN4 GP14, ENB GP15
+  MOTORS SWAPPED SIDES: the motor on L298N OUT1/OUT2 (ENA) is now
+  the RIGHT wheel, and the motor on OUT3/OUT4 (ENB) is now the LEFT
+  wheel. Each motor kept its own wires and encoder.
+
+  Motors (through optocouplers):
+    RIGHT wheel: ENA GP10, IN1 GP11, IN2 GP12
+    LEFT  wheel: ENB GP15, IN3 GP13, IN4 GP14
   Line sensors: Left IR GP1, Right IR GP0
-  Encoders:     Left C1 GP4, C2 GP5 / Right C1 GP18, C2 GP19
+  Encoders:     Left C1 GP18, C2 GP19 / Right C1 GP4, C2 GP5
 
   Lower PWM = Faster, Higher PWM = Slower, 255 = Stop (inverted)
 */
@@ -88,15 +93,19 @@ int RIGHT_BLACK_RIGHT_PWM = 0;    // right wheel
 // ENCODER PINS
 // ==========================================
 
-// The encoder on GP18/GP19 is on the RIGHT motor,
-// the one on GP4/GP5 is on the LEFT motor.
-#define ENC_L_A 4
-#define ENC_L_B 5
-#define ENC_R_A 18
-#define ENC_R_B 19
+// Motors swapped sides, and each encoder moved with its motor:
+// GP18/GP19 encoder is now on the LEFT wheel,
+// GP4/GP5 encoder is now on the RIGHT wheel.
+#define ENC_L_A 18
+#define ENC_L_B 19
+#define ENC_R_A 4
+#define ENC_R_B 5
 
 // -1 if that wheel counts DOWN while driving forward.
-// Check in the Serial Monitor: both rates must be positive going forward.
+// A motor on the other side turns the other way when going forward,
+// so both signs flipped compared with before the swap.
+// Check in the Serial Monitor: both "got" values must be positive
+// going forward.
 int LEFT_SIGN = 1;
 int RIGHT_SIGN = -1;
 
@@ -208,30 +217,34 @@ int dutyToPwm(float duty) {
 // MOTOR OUTPUT
 // ==========================================
 
+// LEFT wheel = motor on OUT3/OUT4 (ENB, IN3, IN4)
 void driveLeft(Wheel &w) {
   if (w.brake) {
     // Both inputs the same + enable on = L298N brakes the motor
-    digitalWrite(IN1, LOW);
-    digitalWrite(IN2, LOW);
-    analogWrite(ENA, 0);
-  } else {
-    // LEFT MOTOR - ORIGINAL DIRECTION
-    digitalWrite(IN1, HIGH);
-    digitalWrite(IN2, LOW);
-    analogWrite(ENA, dutyToPwm(w.duty));
-  }
-}
-
-void driveRight(Wheel &w) {
-  if (w.brake) {
     digitalWrite(IN3, LOW);
     digitalWrite(IN4, LOW);
     analogWrite(ENB, 0);
   } else {
-    // RIGHT MOTOR - ORIGINAL DIRECTION (mounted opposite)
-    digitalWrite(IN3, LOW);
-    digitalWrite(IN4, HIGH);
+    // Forward on the left side (reversed from when this motor
+    // was on the right)
+    digitalWrite(IN3, HIGH);
+    digitalWrite(IN4, LOW);
     analogWrite(ENB, dutyToPwm(w.duty));
+  }
+}
+
+// RIGHT wheel = motor on OUT1/OUT2 (ENA, IN1, IN2)
+void driveRight(Wheel &w) {
+  if (w.brake) {
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, LOW);
+    analogWrite(ENA, 0);
+  } else {
+    // Forward on the right side (reversed from when this motor
+    // was on the left)
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, HIGH);
+    analogWrite(ENA, dutyToPwm(w.duty));
   }
 }
 
