@@ -104,6 +104,23 @@ float KI_SPEED = 0.002;   // slowly removes leftover speed error
 float BRAKE_MARGIN = 6;
 
 // ==========================================
+// WHEEL STATE
+// (defined before any function so the Arduino IDE
+//  can use it in the functions below)
+// ==========================================
+
+struct Wheel {
+  float target = 0;     // wanted counts/50ms
+  float rate = 0;       // measured counts/50ms
+  float integral = 0;
+  float duty = 0;       // 0 = off, 1 = full power
+  bool brake = false;
+  long last = 0;
+};
+
+Wheel L, R;
+
+// ==========================================
 // ENCODERS
 // ==========================================
 
@@ -137,17 +154,6 @@ long rightCount() {
 // ==========================================
 // ONE WHEEL'S SPEED CONTROLLER
 // ==========================================
-
-struct Wheel {
-  float target = 0;     // wanted counts/50ms
-  float rate = 0;       // measured counts/50ms
-  float integral = 0;
-  float duty = 0;       // 0 = off, 1 = full power
-  bool brake = false;
-  long last = 0;
-};
-
-Wheel L, R;
 
 void updateWheel(Wheel &w, long count) {
 
