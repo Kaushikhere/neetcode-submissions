@@ -6,56 +6,36 @@
        2 IR line sensors + 2 wheel encoders
   ==========================================
 
-  WHAT THE ENCODERS DO HERE
+  WHY THIS VERSION
 
-  On straight sections the code compares how far each wheel has
-  turned and trims the right motor's PWM until both wheels turn at
-  the same rate. So the robot drives straight by itself without a
-  hand calibration.
+  Lowering a motor's PWM does not stop it quickly: during the "off"
+  part of each PWM cycle the motor coasts, and one of your motors
+  coasts much longer than the other. So when the robot turned, one
+  wheel slowed at once and the other kept spinning, and the robot
+  went round in circles.
 
-  Run encoder_test first: both counts must go UP when driving
-  forward (fix with LEFT_SIGN / RIGHT_SIGN below).
+  Now each wheel has a target SPEED (encoder counts per 50 ms), not a
+  fixed PWM. Every 25 ms the code measures each wheel:
+    - too slow  -> more power
+    - too fast  -> less power
+    - much too fast -> BRAKE that wheel (L298N shorts the motor),
+                       so it slows down as fast as the other one.
 
   HOW IT STEERS
 
-  The two IR sensors sit on either side of the black line.
+  Both on white   -> straight: both wheels at STRAIGHT_RATE
+  Left on black   -> turn LEFT: left wheel at TURN_INNER_RATE
+  Right on black  -> turn RIGHT: right wheel at TURN_INNER_RATE
+  Both on black   -> crossing line: straight
 
-  Both on white   -> line is between them -> go straight
-  Left on black   -> robot drifted right  -> turn LEFT
-                     (left wheel slows down, it does NOT stop)
-  Right on black  -> robot drifted left   -> turn RIGHT
-                     (right wheel slows down, it does NOT stop)
-  Both on black   -> crossing line        -> go straight
+  PINS
 
-  MOTOR PINS (UNCHANGED, through the optocouplers):
+  Motors (through optocouplers): ENA GP10, IN1 GP11, IN2 GP12,
+                                 IN3 GP13, IN4 GP14, ENB GP15
+  Line sensors: Left IR GP1, Right IR GP0
+  Encoders:     Left C1 GP20, C2 GP21 / Right C1 GP18, C2 GP19
 
-  ENA = GP10
-  IN1 = GP11
-  IN2 = GP12
-
-  IN3 = GP13
-  IN4 = GP14
-  ENB = GP15
-
-  LINE SENSORS:
-
-  Left IR  OUT = GP1
-  Right IR OUT = GP0
-
-  ENCODERS:
-
-  Left  encoder C1 = GP20, C2 = GP21
-  Right encoder C1 = GP18, C2 = GP19
-
-  BASE PWM:
-
-  Both motors = 30 (your encoder log showed both motors turn at the
-  same speed for the same PWM, so no fixed offset is needed; the
-  encoder trim handles the rest)
-
-  Lower PWM = Faster
-  Higher PWM = Slower
-  255 = Stop
+  Lower PWM = Faster, Higher PWM = Slower, 255 = Stop (inverted)
 */
 
 // ==========================================
@@ -77,8 +57,7 @@
 #define LEFT_IR  1
 #define RIGHT_IR 0
 
-// What the IR module outputs when it is over the BLACK line.
-// Most TCRT5000 modules give HIGH on black (their LED goes off).
+// What the IR module outputs over the BLACK line.
 // If the Serial Monitor shows "black" on white paper, change to LOW.
 #define ON_BLACK HIGH
 
@@ -86,45 +65,43 @@
 // ENCODER PINS
 // ==========================================
 
-// The encoder plugged into GP18/GP19 is on the RIGHT motor,
-// and the one on GP20/GP21 is on the LEFT motor.
-#define ENC_L_A 20   // left encoder C1
-#define ENC_L_B 21   // left encoder C2
-#define ENC_R_A 18   // right encoder C1
-#define ENC_R_B 19   // right encoder C2
+// The encoder on GP18/GP19 is on the RIGHT motor,
+// the one on GP20/GP21 is on the LEFT motor.
+#define ENC_L_A 20
+#define ENC_L_B 21
+#define ENC_R_A 18
+#define ENC_R_B 19
 
-// -1 if that wheel counts down while driving forward.
-// The right encoder counted down in your test, so it is -1.
+// -1 if that wheel counts DOWN while driving forward.
+// Check in the Serial Monitor: both rates must be positive going forward.
 int LEFT_SIGN = 1;
 int RIGHT_SIGN = -1;
 
-// How often the wheel speeds are compared (ms)
-unsigned long SPEED_CHECK_MS = 50;
-
-// How strongly the right motor is trimmed per count of difference.
-// Robot still drifts on straights -> increase.
-// Right motor speed hunts up and down -> decrease.
-float TRIM_GAIN = 0.5;
-
-// Largest trim allowed on the right motor (PWM steps)
-int MAX_TRIM = 60;
-
 // ==========================================
-// SPEEDS (raw PWM, lower = faster, 255 = stop)
+// SPEEDS (encoder counts per 50 ms)
 // ==========================================
 
-// Straight: same value on both motors. Not 0, so the encoder trim
-// has room to make the right motor faster as well as slower.
-int LEFT_BASE_PWM  = 30;
-int RIGHT_BASE_PWM = 30;
+// Your log showed about 60 counts/50ms at full power (wheels lifted).
+float MAX_RATE = 60;
 
-// Turning: the wheel on the inside of the turn only slows down.
-// Same value on both, because both motors behave the same.
-// Turns too gently (runs off curves) -> raise towards 255.
-// Turns too sharply (wobbles)        -> lower towards the base value.
-// Keep them below 255, or the wheel stops.
-int LEFT_SLOW_PWM  = 170;   // left wheel while turning LEFT
-int RIGHT_SLOW_PWM = 170;   // right wheel while turning RIGHT
+// Straight speed for both wheels. Lower if it overshoots curves.
+float STRAIGHT_RATE = 40;
+
+// Inner wheel speed during a turn (slowed, never stopped).
+// Runs off curves -> lower it. Wobbles -> raise it.
+float TURN_INNER_RATE = 12;
+
+// ==========================================
+// SPEED CONTROL
+// ==========================================
+
+unsigned long CONTROL_MS = 25;  // how often wheels are measured
+
+float KP_SPEED = 0.012;   // extra power per count of speed error
+float KI_SPEED = 0.002;   // slowly removes leftover speed error
+
+// Brake a wheel when it is this many counts/50ms too fast.
+float BRAKE_MARGIN = 6;
 
 // ==========================================
 // ENCODERS
@@ -157,52 +134,91 @@ long rightCount() {
   return c * RIGHT_SIGN;
 }
 
-// Correction added to RIGHT_BASE_PWM, learned on straights.
-// Positive = right motor slowed down.
-float rightTrim = 0;
+// ==========================================
+// ONE WHEEL'S SPEED CONTROLLER
+// ==========================================
 
-long lastLeft = 0;
-long lastRight = 0;
-unsigned long lastSpeedCheck = 0;
-long leftRate = 0;    // counts in the last SPEED_CHECK_MS
-long rightRate = 0;
+struct Wheel {
+  float target = 0;     // wanted counts/50ms
+  float rate = 0;       // measured counts/50ms
+  float integral = 0;
+  float duty = 0;       // 0 = off, 1 = full power
+  bool brake = false;
+  long last = 0;
+};
+
+Wheel L, R;
+
+void updateWheel(Wheel &w, long count) {
+
+  long delta = count - w.last;
+  w.last = count;
+  w.rate = delta * (50.0 / CONTROL_MS);
+
+  float error = w.target - w.rate;
+
+  // Much too fast (for example just after a turn starts): brake.
+  if (w.rate > w.target + BRAKE_MARGIN) {
+    w.brake = true;
+    w.integral = 0;
+    w.duty = w.target / MAX_RATE;
+    return;
+  }
+
+  w.brake = false;
+
+  w.integral += error;
+  w.integral = constrain(w.integral, -150.0f, 150.0f);
+
+  w.duty = w.target / MAX_RATE + KP_SPEED * error + KI_SPEED * w.integral;
+  w.duty = constrain(w.duty, 0.0f, 1.0f);
+}
+
+int dutyToPwm(float duty) {
+  // Inverted: 0 = full speed, 255 = off
+  return (int)(255 - duty * 255);
+}
 
 // ==========================================
-// MOTOR STOP
+// MOTOR OUTPUT
 // ==========================================
+
+void driveLeft(Wheel &w) {
+  if (w.brake) {
+    // Both inputs the same + enable on = L298N brakes the motor
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, LOW);
+    analogWrite(ENA, 0);
+  } else {
+    // LEFT MOTOR - ORIGINAL DIRECTION
+    digitalWrite(IN1, HIGH);
+    digitalWrite(IN2, LOW);
+    analogWrite(ENA, dutyToPwm(w.duty));
+  }
+}
+
+void driveRight(Wheel &w) {
+  if (w.brake) {
+    digitalWrite(IN3, LOW);
+    digitalWrite(IN4, LOW);
+    analogWrite(ENB, 0);
+  } else {
+    // RIGHT MOTOR - ORIGINAL DIRECTION (mounted opposite)
+    digitalWrite(IN3, LOW);
+    digitalWrite(IN4, HIGH);
+    analogWrite(ENB, dutyToPwm(w.duty));
+  }
+}
 
 void stopMotors() {
-
   // Inverted PWM: 255 = stop
-
   analogWrite(ENA, 255);
   analogWrite(ENB, 255);
 
   digitalWrite(IN1, LOW);
   digitalWrite(IN2, LOW);
-
   digitalWrite(IN3, LOW);
   digitalWrite(IN4, LOW);
-}
-
-// ==========================================
-// MOVE FORWARD
-// ==========================================
-
-void moveForward(int leftPWM, int rightPWM) {
-
-  // LEFT MOTOR - ORIGINAL DIRECTION
-  digitalWrite(IN1, HIGH);
-  digitalWrite(IN2, LOW);
-
-  // RIGHT MOTOR - ORIGINAL DIRECTION
-  // Electrical direction is opposite because
-  // the motors are mounted on opposite sides.
-  digitalWrite(IN3, LOW);
-  digitalWrite(IN4, HIGH);
-
-  analogWrite(ENA, constrain(leftPWM, 0, 255));
-  analogWrite(ENB, constrain(rightPWM, 0, 255));
 }
 
 // ==========================================
@@ -215,10 +231,8 @@ void setup() {
 
   pinMode(ENA, OUTPUT);
   pinMode(ENB, OUTPUT);
-
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
-
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
 
@@ -240,8 +254,11 @@ void setup() {
 
   delay(1000);
 
+  L.last = leftCount();
+  R.last = rightCount();
+
   Serial.println("==============================");
-  Serial.println(" LINE FOLLOWING + ENCODERS");
+  Serial.println(" LINE FOLLOWING + SPEED CONTROL");
   Serial.println("==============================");
   Serial.println("Ready!");
 }
@@ -250,132 +267,75 @@ void setup() {
 // MAIN LOOP
 // ==========================================
 
+unsigned long lastControl = 0;
 unsigned long lastPrint = 0;
+const char* action = "STRAIGHT";
 
 void loop() {
 
   // ----------------------------------------
-  // 1. READ BOTH LINE SENSORS
+  // 1. READ LINE SENSORS -> SET WHEEL TARGETS
   // ----------------------------------------
 
   bool leftBlack  = (digitalRead(LEFT_IR)  == ON_BLACK);
   bool rightBlack = (digitalRead(RIGHT_IR) == ON_BLACK);
 
-  // ----------------------------------------
-  // 2. START WITH CALIBRATED SPEEDS
-  // ----------------------------------------
-
-  int leftPWM  = LEFT_BASE_PWM;
-  int rightPWM = RIGHT_BASE_PWM + (int)rightTrim;
-
-  bool straight = false;
-
-  const char* action;
-
-  // ----------------------------------------
-  // 3. STEER
-  // ----------------------------------------
-
   if (leftBlack && !rightBlack) {
-
-    // LINE UNDER LEFT SENSOR -> TURN LEFT
-    // Left wheel slower, right wheel keeps its speed.
-
-    leftPWM = LEFT_SLOW_PWM;
+    L.target = TURN_INNER_RATE;
+    R.target = STRAIGHT_RATE;
     action = "TURN LEFT";
-
   } else if (rightBlack && !leftBlack) {
-
-    // LINE UNDER RIGHT SENSOR -> TURN RIGHT
-    // Right wheel slower, left wheel keeps its speed.
-
-    rightPWM = RIGHT_SLOW_PWM;
+    L.target = STRAIGHT_RATE;
+    R.target = TURN_INNER_RATE;
     action = "TURN RIGHT";
-
   } else if (leftBlack && rightBlack) {
-
-    // BOTH ON BLACK -> crossing line, keep going
-
-    action = "CROSSING - STRAIGHT";
-    straight = true;
-
+    L.target = STRAIGHT_RATE;
+    R.target = STRAIGHT_RATE;
+    action = "CROSSING";
   } else {
-
-    // BOTH ON WHITE -> line is between the sensors
-
+    L.target = STRAIGHT_RATE;
+    R.target = STRAIGHT_RATE;
     action = "STRAIGHT";
-    straight = true;
   }
 
   // ----------------------------------------
-  // 3b. ENCODERS: MATCH WHEEL SPEEDS ON STRAIGHTS
+  // 2. MEASURE BOTH WHEELS AND SET THEIR POWER
   // ----------------------------------------
 
-  if (millis() - lastSpeedCheck >= SPEED_CHECK_MS) {
+  if (millis() - lastControl >= CONTROL_MS) {
+    lastControl = millis();
 
-    lastSpeedCheck = millis();
+    updateWheel(L, leftCount());
+    updateWheel(R, rightCount());
 
-    long l = leftCount();
-    long r = rightCount();
-
-    leftRate = l - lastLeft;
-    rightRate = r - lastRight;
-
-    lastLeft = l;
-    lastRight = r;
-
-    // Only learn while driving straight with both wheels moving.
-    if (straight && leftRate > 0 && rightRate > 0) {
-
-      // Right wheel faster than left -> slow it (raise its PWM).
-      rightTrim += TRIM_GAIN * (rightRate - leftRate);
-      rightTrim = constrain(rightTrim, (float)-MAX_TRIM, (float)MAX_TRIM);
-    }
-  }
-
-  if (straight) {
-    rightPWM = RIGHT_BASE_PWM + (int)rightTrim;
+    driveLeft(L);
+    driveRight(R);
   }
 
   // ----------------------------------------
-  // 4. MOVE MOTORS
-  // ----------------------------------------
-
-  moveForward(leftPWM, rightPWM);
-
-  // ----------------------------------------
-  // 5. SERIAL MONITOR (5 times a second, so
-  //    printing does not slow the steering)
+  // 3. SERIAL MONITOR
   // ----------------------------------------
 
   if (millis() - lastPrint >= 200) {
-
     lastPrint = millis();
 
     Serial.print("L: ");
     Serial.print(leftBlack ? "black" : "white");
-
     Serial.print(" | R: ");
     Serial.print(rightBlack ? "black" : "white");
-
     Serial.print(" | ");
     Serial.print(action);
 
-    Serial.print(" | ENA: ");
-    Serial.print(leftPWM);
+    Serial.print(" | Left want/got: ");
+    Serial.print((int)L.target);
+    Serial.print("/");
+    Serial.print((int)L.rate);
+    Serial.print(L.brake ? " BRAKE" : "");
 
-    Serial.print(" | ENB: ");
-    Serial.print(rightPWM);
-
-    Serial.print(" | counts/50ms L: ");
-    Serial.print(leftRate);
-
-    Serial.print(" R: ");
-    Serial.print(rightRate);
-
-    Serial.print(" | trim: ");
-    Serial.println((int)rightTrim);
+    Serial.print(" | Right want/got: ");
+    Serial.print((int)R.target);
+    Serial.print("/");
+    Serial.print((int)R.rate);
+    Serial.println(R.brake ? " BRAKE" : "");
   }
-
-  delay(5);
 }
