@@ -23,10 +23,10 @@
 
   HOW IT STEERS
 
-  Both on white   -> straight       (STRAIGHT_... speeds)
-  Left on black   -> turn LEFT      (LEFT_BLACK_... speeds)
-  Right on black  -> turn RIGHT     (RIGHT_BLACK_... speeds)
-  Both on black   -> crossing line, straight speeds
+  Both on white   -> straight       (STRAIGHT_... values)
+  Left on black   -> turn LEFT      (LEFT_BLACK_... values)
+  Right on black  -> turn RIGHT     (RIGHT_BLACK_... values)
+  Both on black   -> crossing line, straight values
 
   All speeds are in the SPEED SETTINGS block just below.
 
@@ -43,21 +43,21 @@
 // ##########################################################
 //   SPEED SETTINGS  -  the only numbers you need to change
 //
-//   Speed unit = encoder counts per 50 ms
-//   (about 60 = full speed, 0 = stopped)
+//   Same scale as your PWM:  0 = FULL speed,  255 = STOPPED
+//   (the encoders then hold each wheel at that speed)
 // ##########################################################
 
 // 1. GOING STRAIGHT (both IR sensors on white)
-float STRAIGHT_LEFT_SPEED  = 40;
-float STRAIGHT_RIGHT_SPEED = 40;
+int STRAIGHT_LEFT_PWM  = 0;
+int STRAIGHT_RIGHT_PWM = 0;
 
 // 2. LEFT IR SEES BLACK (robot turns LEFT)
-float LEFT_BLACK_LEFT_SPEED  = 12;   // left wheel
-float LEFT_BLACK_RIGHT_SPEED = 40;   // right wheel
+int LEFT_BLACK_LEFT_PWM  = 200;   // left wheel
+int LEFT_BLACK_RIGHT_PWM = 0;     // right wheel
 
 // 3. RIGHT IR SEES BLACK (robot turns RIGHT)
-float RIGHT_BLACK_LEFT_SPEED  = 40;  // left wheel
-float RIGHT_BLACK_RIGHT_SPEED = 12;  // right wheel
+int RIGHT_BLACK_LEFT_PWM  = 0;    // left wheel
+int RIGHT_BLACK_RIGHT_PWM = 200;  // right wheel
 
 // ##########################################################
 
@@ -193,6 +193,12 @@ void updateWheel(Wheel &w, long count) {
   w.duty = constrain(w.duty, 0.0f, 1.0f);
 }
 
+// Your PWM scale (0 = full, 255 = stop) -> wheel speed target
+float pwmToRate(int pwm) {
+  pwm = constrain(pwm, 0, 255);
+  return (255 - pwm) / 255.0 * MAX_RATE;
+}
+
 int dutyToPwm(float duty) {
   // Inverted: 0 = full speed, 255 = off
   return (int)(255 - duty * 255);
@@ -300,17 +306,17 @@ void loop() {
   bool rightBlack = (digitalRead(RIGHT_IR) == ON_BLACK);
 
   if (leftBlack && !rightBlack) {
-    L.target = LEFT_BLACK_LEFT_SPEED;
-    R.target = LEFT_BLACK_RIGHT_SPEED;
+    L.target = pwmToRate(LEFT_BLACK_LEFT_PWM);
+    R.target = pwmToRate(LEFT_BLACK_RIGHT_PWM);
     action = "LEFT IR BLACK -> TURN LEFT";
   } else if (rightBlack && !leftBlack) {
-    L.target = RIGHT_BLACK_LEFT_SPEED;
-    R.target = RIGHT_BLACK_RIGHT_SPEED;
+    L.target = pwmToRate(RIGHT_BLACK_LEFT_PWM);
+    R.target = pwmToRate(RIGHT_BLACK_RIGHT_PWM);
     action = "RIGHT IR BLACK -> TURN RIGHT";
   } else {
     // both white, or both black (crossing line)
-    L.target = STRAIGHT_LEFT_SPEED;
-    R.target = STRAIGHT_RIGHT_SPEED;
+    L.target = pwmToRate(STRAIGHT_LEFT_PWM);
+    R.target = pwmToRate(STRAIGHT_RIGHT_PWM);
     action = "STRAIGHT";
   }
 
