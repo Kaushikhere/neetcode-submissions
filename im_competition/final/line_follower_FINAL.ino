@@ -53,18 +53,16 @@
 // ##########################################################
 
 // 1. GOING STRAIGHT (both IR sensors on white)
-int STRAIGHT_LEFT_PWM  = 0;
-int STRAIGHT_RIGHT_PWM = 0;
+int STRAIGHT_LEFT_PWM  = 0 + 30;
+int STRAIGHT_RIGHT_PWM = 70 + 30;
 
 // 2. LEFT IR SEES BLACK (robot turns RIGHT)
-//    right wheel STOPS (255), left wheel full speed
-int LEFT_BLACK_LEFT_PWM  = 0;     // left wheel
-int LEFT_BLACK_RIGHT_PWM = 255;   // right wheel
+int LEFT_BLACK_LEFT_PWM  = 10;     // left wheel
+int LEFT_BLACK_RIGHT_PWM = 250 ;   // right wheel
 
 // 3. RIGHT IR SEES BLACK (robot turns LEFT)
-//    left wheel STOPS (255), right wheel full speed
-int RIGHT_BLACK_LEFT_PWM  = 255;  // left wheel
-int RIGHT_BLACK_RIGHT_PWM = 0;    // right wheel
+int RIGHT_BLACK_LEFT_PWM  = 250;  // left wheel
+int RIGHT_BLACK_RIGHT_PWM = 10;    // right wheel
 
 // ##########################################################
 
