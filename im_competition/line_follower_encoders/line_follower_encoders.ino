@@ -23,17 +23,21 @@
 
   HOW IT STEERS
 
-  Both on white   -> straight: both wheels at STRAIGHT_RATE
-  Left on black   -> turn LEFT: left wheel at TURN_INNER_RATE
-  Right on black  -> turn RIGHT: right wheel at TURN_INNER_RATE
+  Both on white   -> straight: LEFT_STRAIGHT_RATE / RIGHT_STRAIGHT_RATE
+  Left on black   -> turn LEFT:  left wheel at LEFT_TURN_RATE,
+                                 right wheel at RIGHT_STRAIGHT_RATE
+  Right on black  -> turn RIGHT: right wheel at RIGHT_TURN_RATE,
+                                 left wheel at LEFT_STRAIGHT_RATE
   Both on black   -> crossing line: straight
+
+  Every speed is set separately for each wheel (see SPEEDS below).
 
   PINS
 
   Motors (through optocouplers): ENA GP10, IN1 GP11, IN2 GP12,
                                  IN3 GP13, IN4 GP14, ENB GP15
   Line sensors: Left IR GP1, Right IR GP0
-  Encoders:     Left C1 GP20, C2 GP21 / Right C1 GP18, C2 GP19
+  Encoders:     Left C1 GP4, C2 GP5 / Right C1 GP18, C2 GP19
 
   Lower PWM = Faster, Higher PWM = Slower, 255 = Stop (inverted)
 */
@@ -66,9 +70,9 @@
 // ==========================================
 
 // The encoder on GP18/GP19 is on the RIGHT motor,
-// the one on GP20/GP21 is on the LEFT motor.
-#define ENC_L_A 20
-#define ENC_L_B 21
+// the one on GP4/GP5 is on the LEFT motor.
+#define ENC_L_A 4
+#define ENC_L_B 5
 #define ENC_R_A 18
 #define ENC_R_B 19
 
@@ -81,15 +85,26 @@ int RIGHT_SIGN = -1;
 // SPEEDS (encoder counts per 50 ms)
 // ==========================================
 
-// Your log showed about 60 counts/50ms at full power (wheels lifted).
-float MAX_RATE = 60;
+// Each wheel has its own numbers, so you can change one side
+// without touching the other.
 
-// Straight speed for both wheels. Lower if it overshoots curves.
-float STRAIGHT_RATE = 40;
+// Speed of each wheel at full power (your log showed about 60
+// counts/50ms with the wheels lifted). Used as the starting guess
+// for how much power a speed needs.
+float LEFT_MAX_RATE  = 60;
+float RIGHT_MAX_RATE = 60;
+
+// Straight speed of each wheel. Lower both if it overshoots curves.
+// Robot drifts right on a straight -> raise RIGHT or lower LEFT.
+float LEFT_STRAIGHT_RATE  = 40;
+float RIGHT_STRAIGHT_RATE = 40;
 
 // Inner wheel speed during a turn (slowed, never stopped).
+// LEFT_TURN_RATE  = left wheel while turning LEFT
+// RIGHT_TURN_RATE = right wheel while turning RIGHT
 // Runs off curves -> lower it. Wobbles -> raise it.
-float TURN_INNER_RATE = 12;
+float LEFT_TURN_RATE  = 12;
+float RIGHT_TURN_RATE = 12;
 
 // ==========================================
 // SPEED CONTROL
@@ -111,6 +126,7 @@ float BRAKE_MARGIN = 6;
 
 struct Wheel {
   float target = 0;     // wanted counts/50ms
+  float maxRate = 60;   // counts/50ms at full power
   float rate = 0;       // measured counts/50ms
   float integral = 0;
   float duty = 0;       // 0 = off, 1 = full power
@@ -167,7 +183,7 @@ void updateWheel(Wheel &w, long count) {
   if (w.rate > w.target + BRAKE_MARGIN) {
     w.brake = true;
     w.integral = 0;
-    w.duty = w.target / MAX_RATE;
+    w.duty = w.target / w.maxRate;
     return;
   }
 
@@ -176,7 +192,7 @@ void updateWheel(Wheel &w, long count) {
   w.integral += error;
   w.integral = constrain(w.integral, -150.0f, 150.0f);
 
-  w.duty = w.target / MAX_RATE + KP_SPEED * error + KI_SPEED * w.integral;
+  w.duty = w.target / w.maxRate + KP_SPEED * error + KI_SPEED * w.integral;
   w.duty = constrain(w.duty, 0.0f, 1.0f);
 }
 
@@ -286,21 +302,24 @@ void loop() {
   bool leftBlack  = (digitalRead(LEFT_IR)  == ON_BLACK);
   bool rightBlack = (digitalRead(RIGHT_IR) == ON_BLACK);
 
+  L.maxRate = LEFT_MAX_RATE;
+  R.maxRate = RIGHT_MAX_RATE;
+
   if (leftBlack && !rightBlack) {
-    L.target = TURN_INNER_RATE;
-    R.target = STRAIGHT_RATE;
+    L.target = LEFT_TURN_RATE;
+    R.target = RIGHT_STRAIGHT_RATE;
     action = "TURN LEFT";
   } else if (rightBlack && !leftBlack) {
-    L.target = STRAIGHT_RATE;
-    R.target = TURN_INNER_RATE;
+    L.target = LEFT_STRAIGHT_RATE;
+    R.target = RIGHT_TURN_RATE;
     action = "TURN RIGHT";
   } else if (leftBlack && rightBlack) {
-    L.target = STRAIGHT_RATE;
-    R.target = STRAIGHT_RATE;
+    L.target = LEFT_STRAIGHT_RATE;
+    R.target = RIGHT_STRAIGHT_RATE;
     action = "CROSSING";
   } else {
-    L.target = STRAIGHT_RATE;
-    R.target = STRAIGHT_RATE;
+    L.target = LEFT_STRAIGHT_RATE;
+    R.target = RIGHT_STRAIGHT_RATE;
     action = "STRAIGHT";
   }
 
