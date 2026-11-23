@@ -70,9 +70,9 @@ int RUN_MODE = 0;
 // ===================== CALIBRATION (modes 1 and 2) =====================
 // These matter for the spin, the T1 hop and every turn. 12 / 15 are only
 // placeholders - measure them with modes 1 and 2.
-float COUNTS_PER_CM_L = 12.0;
-float COUNTS_PER_CM_R = 12.0;
-float WHEEL_BASE_CM   = 15.0;
+float COUNTS_PER_CM_L = 140.98; // your mode 1 result (pushed 100 cm)
+float COUNTS_PER_CM_R = 105.20; // your mode 1 result - the encoders differ by ~34%
+float WHEEL_BASE_CM   = 15.0;   // PLACEHOLDER - redo mode 2 with the numbers above
 float IR_FORWARD_CM   = 8.0;    // middle of the two IRs, ahead of the axle centre
 float IR_GAP_CM       = 4.0;    // distance between the two IRs (width check)
 float US_SIDE_CM      = 10.0;   // right ultrasonic face, right of the axle centre
@@ -110,7 +110,8 @@ float T2_FROM_WALL_CM = 3.0;
 
 // ===================== SPEEDS =====================
 // Moves: encoder counts per 50 ms (about 60 = full speed)
-float DRIVE = 18, SLOW = 10, TURN = 9, CREEP = 6, BACK = 12;
+// (your motors barely move below ~15; full speed is ~65)
+float DRIVE = 45, SLOW = 30, TURN = 25, CREEP = 16, BACK = 30;
 // Line follower: YOUR WORKING VALUES (0 = full, 255 = stop)
 int STRAIGHT_L = 20, STRAIGHT_R = 110;   // both IRs white
 int LB_L = 10,  LB_R = 250;              // left IR (GP16) black
@@ -169,6 +170,7 @@ bool spinOpen[36]; float spun = 0, prevTh = 0, upDeg = 90;
 
 float lStart, lEnd, rStart, rEnd;    // width check
 float lineW = 0;
+float curlHeading = 90;              // stage 2 driving direction (moves inward after a border)
 float rideTurn = 0, rideTh = 0;      // stage 3: total turn while riding (+ = left)
 bool  onTop = false;
 float whiteFrom = -1, lastBlackTh = 0; int lastSide = 0;   // +1 = line last on the right
@@ -267,7 +269,7 @@ void go(Step s) {
 bool face(float hDeg) {                             // turn on the spot
   float e = wrapPi(rad(hDeg) - th);
   if (fabs(e) < rad(2)) { wheels(0, 0); return true; }
-  float s = fabs(e) < rad(15) ? TURN * 0.5 : TURN;
+  float s = fabs(e) < rad(15) ? TURN * 0.6 : TURN;
   if (e > 0) wheels(-s, s); else wheels(s, -s);
   return false;
 }
@@ -286,7 +288,10 @@ bool goTo(float tx, float ty) {
   return false;
 }
 
-void pivot(int dir) { wheels(-dir * TURN * 0.8, dir * TURN * 0.8); }   // +1 = left
+// border band = the board edge: head back inward (left edge -> go right-up)
+void borderTurn() { curlHeading = wrapPi(th - rad(90)) > 0 ? 60 : 120; }
+
+void pivot(int dir) { wheels(-dir * TURN, dir * TURN); }   // +1 = left
 
 // ===================== LINE FOLLOWER =====================
 // Your follower. If both IRs stay white for LOST_CM (and search is on):
@@ -357,7 +362,7 @@ void setup() {
   runStart = lastTick = lastCtl = millis();
   for (int i = 0; i < 36; i++) spinOpen[i] = false;
   prevTh = th;
-  if (Serial && COUNTS_PER_CM_L == 12.0) Serial.println("NOTE: COUNTS_PER_CM is still the 12.0 placeholder - run modes 1 and 2");
+  if (Serial && WHEEL_BASE_CM == 15.0) Serial.println("NOTE: WHEEL_BASE_CM is still the 15.0 placeholder - run mode 2");
   if (Serial) { Serial.print("CURL PLAN - RUN_MODE "); Serial.println(RUN_MODE); }
   if (RUN_MODE == 4) { startFollow(); go(S_FOLLOW); }
   else go(S_SPIN);
@@ -376,7 +381,8 @@ void loop() {
         Serial.print("  COUNTS_PER_CM_R = "); Serial.println(r / 100.0, 2);
       } else {
         float dL = l / COUNTS_PER_CM_L, dR = r / COUNTS_PER_CM_R;
-        Serial.print("after ONE full turn left: WHEEL_BASE_CM = "); Serial.println((dR - dL) / (2 * PI), 2);
+        Serial.print("counts L "); Serial.print(l); Serial.print("  R "); Serial.print(r);
+        Serial.print("   after ONE full turn left: WHEEL_BASE_CM = "); Serial.println((dR - dL) / (2 * PI), 2);
       }
     }
     return;
@@ -422,7 +428,8 @@ void loop() {
     tick(); return;
   }
   if (openDrive && step != S_SPIN && L.target > 0 && R.target > 0 && f > 0 && f < FRONT_STOP_CM) {
-    escape = 1; escStart = fwd; escTo = deg(th) + 35;
+    // turn back toward the middle: heading left of up-field -> turn right
+    escape = 1; escStart = fwd; escTo = deg(th) + (wrapPi(th - rad(90)) > 0 ? -35 : 35);
     if (Serial) Serial.println("WALL AHEAD - backing off");
     tick(); return;
   }
@@ -457,7 +464,7 @@ void loop() {
         lStart = lB ? fwd : -1; rStart = rB ? fwd : -1; lEnd = rEnd = -1;
         go(S_WIDTH);
       } else if (fwd - legStart > CURL_MAX_CM) { Serial.println("NO CURL FOUND"); go(S_DONE); }
-      else hold(90, DRIVE);
+      else hold(curlHeading, DRIVE);
       break;
 
     case S_WIDTH: {                                 // measure the black with the encoders
@@ -466,7 +473,7 @@ void loop() {
       if (!lB && lStart >= 0 && lEnd < 0) lEnd = fwd;
       if (!rB && rStart >= 0 && rEnd < 0) rEnd = fwd;
       bool longBlack = (lB && lStart >= 0 && fwd - lStart > BORDER_CM) || (rB && rStart >= 0 && fwd - rStart > BORDER_CM);
-      if (longBlack) { wheels(0, 0); Serial.println("BLACK TOO WIDE - border band"); go(S_BORDER); break; }
+      if (longBlack) { wheels(0, 0); Serial.println("BLACK TOO WIDE - border band"); borderTurn(); go(S_BORDER); break; }
       bool lDone = lStart < 0 || lEnd >= 0, rDone = rStart < 0 || rEnd >= 0;
       if ((lDone && rDone) || fwd - legStart > 12) {
         float lenL = lStart >= 0 && lEnd >= 0 ? lEnd - lStart : 99, lenR = rStart >= 0 && rEnd >= 0 ? rEnd - rStart : 99;
@@ -475,14 +482,14 @@ void loop() {
         lineW = fminf(lenL, lenR) * cosA;
         if (Serial) { Serial.print("WIDTH "); Serial.print(lineW, 1); Serial.println(" cm"); }
         if (lineW <= LINE_MAX_CM) go(S_ONTO_CURL);
-        else { Serial.println("not a 2-4 cm line - border band"); go(S_BORDER); }
+        else { Serial.println("not a 2-4 cm line - border band"); borderTurn(); go(S_BORDER); }
       } else hold(deg(legTh), SLOW);
       break;
     }
 
     case S_BORDER:                                  // back off the band, turn a little, try again
       if (legStart - fwd < 12) wheels(-BACK, -BACK);
-      else if (face(deg(legTh) + 30)) go(S_TO_CURL);
+      else if (face(curlHeading)) go(S_TO_CURL);
       break;
 
     case S_ONTO_CURL:                               // axle over the line, then turn left onto it
