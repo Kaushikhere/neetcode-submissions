@@ -48,6 +48,10 @@
     3 SENSOR TEST motors off. Prints FRONT, RIGHT and both IRs.
     4 LINE TEST   put it on a line: it only follows the line.
     5 DEAD END    stages 1-3, then stops at the dead end and prints.
+    6 MOTOR TEST  no encoders, no IRs: both wheels forward at your straight
+                  PWM for 3 s, then backward 3 s, repeating. Prints the
+                  encoder counts. If the wheels do not turn here, the
+                  problem is power or wiring, not the code.
 
   PINS (your connections)
     Right wheel : ENA GP0, IN1 GP1, IN2 GP2   (L298N OUT1/OUT2)
@@ -345,7 +349,9 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(ENC_R_A), isrR, CHANGE);
   analogWriteRange(255); analogWriteFreq(500);
   motorsOff();
-  servo.attach(SERVO_PIN); servo.write(SERVO_HOLD);
+  // The servo is only powered in the modes that use it: its start-up kick
+  // can reset the Pico on a weak supply, and then the motors never start.
+  if (RUN_MODE == 0 || RUN_MODE == 5) { servo.attach(SERVO_PIN); servo.write(SERVO_HOLD); }
 
   // Your follower turns TOWARD the IR that sees black. GP16 black slows the
   // right wheel (LB_R 250) = turns right, so GP16 sits on the robot's right.
@@ -357,6 +363,7 @@ void setup() {
   for (int i = 0; i < 36; i++) spinOpen[i] = false;
   prevTh = th;
   if (Serial && COUNTS_PER_CM_L == 12.0) Serial.println("NOTE: COUNTS_PER_CM is still the 12.0 placeholder - run modes 1 and 2");
+  if (Serial) { Serial.print("CURL PLAN - RUN_MODE "); Serial.println(RUN_MODE); }
   if (RUN_MODE == 4) { startFollow(); go(S_FOLLOW); }
   else go(S_SPIN);
 }
@@ -377,6 +384,18 @@ void loop() {
         Serial.print("after ONE full turn left: WHEEL_BASE_CM = "); Serial.println((dR - dL) / (2 * PI), 2);
       }
     }
+    return;
+  }
+  if (RUN_MODE == 6) {                              // raw motor test: no speed control at all
+    bool forward = ((millis() - runStart) / 3000) % 2 == 0;
+    digitalWrite(IN1, forward ? LOW : HIGH);  digitalWrite(IN2, forward ? HIGH : LOW);   // right wheel
+    digitalWrite(IN3, forward ? HIGH : LOW);  digitalWrite(IN4, forward ? LOW : HIGH);   // left wheel
+    analogWrite(ENA, STRAIGHT_R); analogWrite(ENB, STRAIGHT_L);                         // inverted PWM
+    if (millis() - lastPrint > 300) { lastPrint = millis();
+      Serial.print(forward ? "FORWARD " : "BACKWARD"); Serial.print("   ENA "); Serial.print(STRAIGHT_R);
+      Serial.print(" ENB "); Serial.print(STRAIGHT_L);
+      Serial.print("   encoder counts L "); Serial.print(cntL() - startL);
+      Serial.print("  R "); Serial.println(cntR() - startR); }
     return;
   }
   if (RUN_MODE != 4 && step != S_DONE && millis() - runStart > 88000) { Serial.println("88 s - STOP"); go(S_DONE); }
