@@ -53,8 +53,8 @@
 // ##########################################################
 
 // 1. GOING STRAIGHT (both IR sensors on white)
-int STRAIGHT_LEFT_PWM  = 0 + 30;
-int STRAIGHT_RIGHT_PWM = 70 + 30;
+int STRAIGHT_LEFT_PWM  = 30;
+int STRAIGHT_RIGHT_PWM = 30;
 
 // 2. LEFT IR SEES BLACK (robot turns RIGHT)
 int LEFT_BLACK_LEFT_PWM  = 10;     // left wheel
@@ -123,7 +123,7 @@ float KP_SPEED = 0.012;   // extra power per count of speed error
 float KI_SPEED = 0.002;   // slowly removes leftover speed error
 
 // Brake a wheel when it is this many counts/50ms too fast.
-float BRAKE_MARGIN = 6;
+float BRAKE_MARGIN = 10;
 
 // ==========================================
 // WHEEL STATE
