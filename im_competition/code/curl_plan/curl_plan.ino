@@ -25,7 +25,8 @@
     Known point + known heading = exact pose.
   STAGE 4  DELIVER AT T1
     From the dead end, T1 is one fixed hop (HOP_TURN_DEG, HOP_CM -
-    measure it once with a tape). Drop from the axle midpoint onto T1.
+    measure it once with a tape). STOP with the axle midpoint on T1 and
+    wait T1_WAIT_MS (no servo for now - this is where the drop goes later).
     Face right, drive right until the IR sees black at A (about 39 cm).
   STAGE 5  FOLLOW THE LINE
     Roll onto the line at A, turn left onto it and follow it up the
@@ -34,7 +35,7 @@
   STAGE 6  INTO THE T2 POCKET
     Square up along the rails (heading about -63 deg), swing to the
     middle of the pocket with the right ultrasonic, stop at the pointer
-    length from the rung and flip the pointer out over T2.
+    length from the rung (no servo for now: it just stops there).
 
   The start pose is never computed. The dead end resets everything, so
   everything after it is the same from any start. Stops at 88 s.
@@ -57,12 +58,11 @@
     Right wheel : ENA GP0, IN1 GP1, IN2 GP2   (L298N OUT1/OUT2)
     Left wheel  : IN3 GP3, IN4 GP4, ENB GP5   (L298N OUT3/OUT4)
     Ultrasonic  : RIGHT TRIG GP6 / ECHO GP7, FRONT TRIG GP8 / ECHO GP9
-    Servo GP10, encoders right GP12/GP13, left GP14/GP15
+    Encoders right GP12/GP13, left GP14/GP15   (servo GP10 not used now)
     IR left GP16, right GP17
     PWM through the optocouplers is inverted: 0 = full, 255 = stop.
 */
 
-#include <Servo.h>
 
 // ===================== RUN MODE =====================
 int RUN_MODE = 0;
@@ -76,8 +76,8 @@ float WHEEL_BASE_CM   = 15.0;
 float IR_FORWARD_CM   = 8.0;    // middle of the two IRs, ahead of the axle centre
 float IR_GAP_CM       = 4.0;    // distance between the two IRs (width check)
 float US_SIDE_CM      = 10.0;   // right ultrasonic face, right of the axle centre
-float POINTER_CM      = 7.0;    // unfolded pointer tip, past the front ultrasonic
-int   SERVO_HOLD = 0, SERVO_DROP = 90, SERVO_POINTER = 180;
+float POINTER_CM      = 7.0;    // pointer tip past the front ultrasonic (stop distance at T2)
+unsigned long T1_WAIT_MS = 1000; // stop this long on T1
 
 // ===================== STAGE SETTINGS (practice board) =====================
 // Stage 1
@@ -129,7 +129,6 @@ float FRONT_STOP_CM = 12;                // open driving: wall this close -> bac
 #define R_ECHO 7
 #define F_TRIG 8
 #define F_ECHO 9
-#define SERVO_PIN 10
 #define ENC_R_A 12
 #define ENC_R_B 13
 #define ENC_L_A 14
@@ -149,19 +148,18 @@ enum Step { S_SPIN, S_FACE_OPEN, S_TO_CURL, S_WIDTH, S_BORDER, S_ONTO_CURL, S_TU
             S_POINTER, S_DONE };
 const char* NAMES[] = { "1 SPIN", "1 FACE OPEN", "2 TO CURL", "2 WIDTH CHECK", "2 BORDER",
                         "2 ONTO CURL", "3 TURN ONTO CURL", "3 RIDE", "3 DEAD END",
-                        "4 FACE T1", "4 HOP", "4 DROP", "4 FACE RIGHT", "4 TO A",
+                        "4 FACE T1", "4 HOP", "4 AT T1", "4 FACE RIGHT", "4 TO A",
                         "5 ONTO A", "5 TURN ONTO LINE", "5 FOLLOW", "6 TO MOUTH",
-                        "6 SQUARE UP", "6 POCKET", "6 POINTER", "DONE" };
+                        "6 SQUARE UP", "6 POCKET", "6 AT T2", "DONE" };
 
 // ===================== STATE =====================
 Wheel L, R;
-Servo servo;
 Step step = S_SPIN;
 float x = 0, y = 0, th = 0;          // odometry (cm, rad); the field frame from stage 1
 float fwd = 0;                       // signed distance driven
 float legStart = 0, legTh = 0;       // fwd / th when the step began
 long oL = 0, oR = 0, startL = 0, startR = 0;
-unsigned long runStart, lastTick, lastCtl, lastPrint, stuckSince = 0, servoT = 0;
+unsigned long runStart, lastTick, lastCtl, lastPrint, stuckSince = 0, waitT = 0;
 
 bool irL = false, irR = false;       // black seen since the last tick
 bool leftIrOnRight = true;           // from your follower values (setup)
@@ -349,9 +347,6 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(ENC_R_A), isrR, CHANGE);
   analogWriteRange(255); analogWriteFreq(500);
   motorsOff();
-  // The servo is only powered in the modes that use it: its start-up kick
-  // can reset the Pico on a weak supply, and then the motors never start.
-  if (RUN_MODE == 0 || RUN_MODE == 5) { servo.attach(SERVO_PIN); servo.write(SERVO_HOLD); }
 
   // Your follower turns TOWARD the IR that sees black. GP16 black slows the
   // right wheel (LB_R 250) = turns right, so GP16 sits on the robot's right.
@@ -550,14 +545,14 @@ void loop() {
       break;
 
     case S_HOP:                                     // one fixed hop
-      if (fwd - legStart >= HOP_CM) { wheels(0, 0); servoT = 0; go(S_DROP); }
+      if (fwd - legStart >= HOP_CM) { wheels(0, 0); waitT = 0; go(S_DROP); }
       else hold(DE_HEADING_DEG + HOP_TURN_DEG, HOP_CM - (fwd - legStart) > 10 ? DRIVE : SLOW * 0.6);
       break;
 
     case S_DROP:
       wheels(0, 0);
-      if (servoT == 0) { servo.write(SERVO_DROP); servoT = millis(); Serial.println("DROP AT T1"); }
-      else if (millis() - servoT > 600) { servo.write(SERVO_HOLD); go(S_FACE_RIGHT); }
+      if (waitT == 0) { waitT = millis(); Serial.println("AT T1 - stopped"); }   // no servo for now
+      else if (millis() - waitT > T1_WAIT_MS) go(S_FACE_RIGHT);
       break;
 
     case S_FACE_RIGHT:
@@ -625,7 +620,7 @@ void loop() {
       float stopAt = T2_FROM_WALL_CM + POINTER_CM;
       if ((f > 0 && f <= stopAt) || fwd - legStart > 35) {
         wheels(0, 0); Serial.print("AT T2, front "); Serial.println(f);
-        servoT = 0; go(S_POINTER); break;
+        waitT = 0; go(S_POINTER); break;
       }
       float h = POCKET_HEADING;
       if (r > 0 && r < 40) h -= constrain((r - (POCKET_CENTRE_TO_RAIL_CM - US_SIDE_CM)) * 1.5f, -15.0f, 15.0f);
@@ -633,10 +628,9 @@ void loop() {
       break;
     }
 
-    case S_POINTER:                                 // flip the pointer out over T2
+    case S_POINTER:                                 // stopped at T2 (no pointer servo for now)
       wheels(0, 0);
-      if (servoT == 0) { servo.write(SERVO_POINTER); servoT = millis(); }
-      else if (millis() - servoT > 500) go(S_DONE);
+      go(S_DONE);
       break;
 
     case S_DONE:
