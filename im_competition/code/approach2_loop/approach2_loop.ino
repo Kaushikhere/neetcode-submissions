@@ -96,6 +96,13 @@ int SERVO_OPEN   = 90;
 //   FIELD MAP (cm)  - tape-measure and correct these
 // ##########################################################
 
+// Practice board WITHOUT the 30 cm start walls? The start spin needs
+// those walls (it measures its position from their echoes). Set this
+// true and put the robot exactly at START_X, START_Y facing START_HEADING
+// (0 = right, 90 = up the field). With walls: false.
+bool  NO_START_WALLS = true;
+float START_X = 61, START_Y = 25, START_HEADING = 90;   // middle of the start area, facing up
+
 float WALL_LEFT_X  = 0;     // inner face of the left start wall
 float WALL_RIGHT_X = 122;   // inner face of the right start wall
 float WALL_BACK_Y  = 0;     // inner face of the back start wall
@@ -811,6 +818,13 @@ void setup() {
   // mode-specific start
   if (RUN_MODE == 2) { poseX = 0; poseY = 0; poseTh = 0; goalX = 100; goalY = 0; }
   if (RUN_MODE == 3) { sweepStartTh = poseTh; }
+  // No start walls on the board -> the spin has nothing to measure.
+  // Place the robot at a known spot instead and skip the spin.
+  if (NO_START_WALLS) {
+    poseX = START_X; poseY = START_Y; poseTh = deg2rad(START_HEADING);
+    step = S_AIM_LOOP;
+    Serial.println("NO_START_WALLS: using START_X/Y/HEADING, no spin");
+  }
 
   runStart = millis();
   lastControl = millis();
