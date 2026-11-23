@@ -9,9 +9,8 @@ the black loop that circles T1 to place itself exactly. Because the line
 does the positioning, errors from the start and from wheel slip do not
 carry over to T1.
 
-It still **drops with the servo** at T1, exactly like approach 1. Only
-the way it finds T1 is different. Everything after T1 is the same as
-approach 1.
+At T1 it **stops for 1 s** (no servo for now). Then: face right, drive
+to the line at A, roll onto it and **turn left** onto it, follow it.
 
 It **needs the loop round T1** on the competition board.
 
@@ -33,11 +32,19 @@ has, or keeps the rough position.
 |---|---|---|---|
 | 1 | Rough position | Spins once reading both ultrasonics -> rough x, y, heading | Both ultrasonics, encoders |
 | 2 | Find T1 | Two chords across the loop, fit the 4 points to the map | IRs, encoders |
-| 3 | Drop | Servo opens over T1 | Servo |
-| 4 | Find the line | Faces right, drives about 39 cm to the loop | IRs |
-| 5 | Follow the line | Same as approach 1 | IRs, encoders |
+| 3 | At T1 | Stops 1 s (no servo for now) | |
+| 4 | Find the line | Faces right, drives about 39 cm to A, rolls on, turns left onto it | IRs, encoders |
+| 5 | Follow the line | Your follower speeds; slow from the passage on; line lost -> pivot (left first after the passage); border band -> back off; the hairpin (~140 deg left) is the landmark, line end 34 cm after it | IRs, encoders |
 | 6 | Into the T2 pocket | Same as approach 1 | Both ultrasonics |
 | 7 | Stop | Motors off, 88 s limit | |
+
+## Encoder counts
+
+Separate counts per cm for each wheel: `COUNTS_PER_CM_L = 13.74`,
+`COUNTS_PER_CM_R = 10.26` (average 12 as before, split in the 34% ratio
+measured in mode 1). The whole course depends on these: in simulation
+it finishes from 16 of 16 starts with them right, but a 10% error in
+the average breaks T1 and T2.
 
 ## Expected accuracy (computer simulation, not yet tested on the robot)
 

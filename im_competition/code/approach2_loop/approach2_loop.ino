@@ -70,7 +70,11 @@ int RUN_MODE = 0;
 //   CALIBRATION  (measure these on the real board)
 // ##########################################################
 
-float COUNTS_PER_CM = 12.0;    // from RUN_MODE 1 and 2
+// Your encoders differ: the LEFT one counts ~34% more per cm than the
+// RIGHT (your mode 1 test: 140.98 vs 105.20). Same average (12) as the
+// value that worked before, split in that ratio so it drives straight.
+float COUNTS_PER_CM_L = 13.74;
+float COUNTS_PER_CM_R = 10.26;
 float WHEEL_BASE_CM = 15.0;    // centre of left wheel to centre of
                                // right wheel, then tune with mode 3
 
@@ -152,14 +156,19 @@ int RIGHT_BLACK_RIGHT_PWM = 10;
 // the dead-end branch, change it.
 int FORK_IGNORE = 0;
 
-// LINE LOST: both IRs white for longer than LOST_MS -> turn towards
+// LINE LOST: both IRs white for LOST_CM -> pivot on the spot towards
 // the side where the line was last seen, until an IR finds it again.
 // Not used near the line end (so the end is still detected), and it
-// gives up after SEARCH_MAX_MS.
-unsigned long LOST_MS = 400;        // 0 = never search
-unsigned long SEARCH_MAX_MS = 1500;
-int SEARCH_FAST_PWM = 60;           // outer wheel while searching
-int SEARCH_SLOW_PWM = 255;          // inner wheel while searching (255 = stopped)
+// gives up after SEARCH_MAX_DEG.
+float LOST_CM = 8;                  // both IRs white this far -> line lost
+float SEARCH_MAX_DEG = 60;          // look this far each way (not far enough to catch the line behind)
+// Slow down (your video: "go slowly in the passage", "hairpin: slow down")
+float PASSAGE_FROM_CM = 65, PASSAGE_TO_CM = 130;   // along the line from A
+float HAIRPIN_FROM_CM = 170;                       // slow from here (hairpin and line end)
+float HAIRPIN_SEARCH_FROM_CM = 175;                // look for the hairpin after this (the corner
+                                                   // at the top of the passage comes before)
+float HAIRPIN_TO_END_CM = 34;                      // line end, measured from the hairpin
+float SLOW_K = 0.5;                                // speed factor there
 
 unsigned long RUN_TIME_LIMIT_MS = 88000;   // rules: off by 90 s
 
@@ -220,7 +229,7 @@ struct Wheel {
 enum Step {
   S_SWEEP, S_AIM_LOOP, S_TO_LOOP, S_CROSS, S_TO_M1, S_FACE_A, S_FIND_A,
   S_FACE_B, S_FIND_B, S_MATCH, S_FACE_T1, S_GO_T1, S_DROP, S_FACE_LINE, S_FIND_LINE,
-  S_FOLLOW, S_FACE_MOUTH, S_GO_MOUTH, S_FACE_POCKET, S_IN_POCKET, S_DONE
+  S_ONTO_LINE, S_TURN_LINE, S_FOLLOW, S_FACE_MOUTH, S_GO_MOUTH, S_FACE_POCKET, S_IN_POCKET, S_DONE
 };
 
 Wheel L, R;
@@ -420,8 +429,8 @@ void setWheels(float leftRate, float rightRate) {
 // ==========================================
 
 void updatePose(long cl, long cr) {
-  float dL = (cl - lastOdoL) / COUNTS_PER_CM;
-  float dR = (cr - lastOdoR) / COUNTS_PER_CM;
+  float dL = (cl - lastOdoL) / COUNTS_PER_CM_L;
+  float dR = (cr - lastOdoR) / COUNTS_PER_CM_R;
   lastOdoL = cl;
   lastOdoR = cr;
 
@@ -671,40 +680,92 @@ void loopCorrection(bool lBlack, bool rBlack) {
 // ==========================================
 
 int lastSide = 0;                 // +1 left IR saw black last, -1 right IR
-unsigned long whiteSinceMs = 0;   // when both IRs went white
+float whiteFromCm = -1;           // where both IRs went white
 float searchCm = 0, lastTrav = 0; // distance driven while searching
+bool  pivoting = false; int pivotPhase = 0; float pivotStartTh = 0;
+float bothFromCm = -1, borderX = 0, borderY = 0; bool borderBack = false;
+float BORDER_CM = 6;              // both IRs black this far = the board's border band
 
-void startFollow() { lastSide = 0; whiteSinceMs = 0; searchCm = 0; lastTrav = travelled; }
+bool turnCounting = false; float turnSum = 0, turnPrevTh = 0, hairpinAt = -1;   // hairpin landmark
 
-// returns true while it is searching for a lost line
+void startFollow() { lastSide = 0; whiteFromCm = -1; searchCm = 0; lastTrav = travelled; pivoting = false;
+                     bothFromCm = -1; borderBack = false;
+                     turnCounting = false; turnSum = 0; hairpinAt = -1; }
+
+// Your line follower. Slow (SLOW_K) from the passage to the end (passage,
+// the sharp corner after it, the hairpin). If both IRs stay white for LOST_CM: pivot ON THE SPOT up to
+// SEARCH_MAX_DEG toward the side the line was last seen (left at the
+// hairpin), then the other way; if still nothing, straight on.
+// Returns true while it is searching.
 bool followLine(bool lBlack, bool rBlack, float alongLine, bool allowSearch) {
   // at the fork, ignore one sensor so the robot stays on the line
   if (alongLine > FORK_AT_CM - 10 && alongLine < FORK_AT_CM + 20) {
     if (FORK_IGNORE == 0) rBlack = false;
     else lBlack = false;
   }
+  // slow from the passage on: passage, the sharp corner after it, hairpin
+  bool slow = alongLine > PASSAGE_FROM_CM;
+  float k = slow ? SLOW_K : 1.0;
 
   int lp = STRAIGHT_LEFT_PWM, rp = STRAIGHT_RIGHT_PWM;
-  bool searching = false;
-  if (lBlack || rBlack) whiteSinceMs = 0;
+
+  // BORDER: both IRs black for longer than BORDER_CM is the 5 cm band at
+  // the board edge, not a crossing line: back off, then look for the line
+  float dTrav = travelled - lastTrav;
+  lastTrav = travelled;
+  if (borderBack) {
+    searchCm += dTrav;                            // backing off is not distance along the line
+    if (hypot(poseX - borderX, poseY - borderY) < 10) { setWheels(-SEARCH_RATE, -SEARCH_RATE); return true; }
+    borderBack = false; bothFromCm = -1;
+    whiteFromCm = travelled - LOST_CM;            // search right away
+    lBlack = rBlack = false;
+  } else if (lBlack && rBlack) {
+    if (bothFromCm < 0) bothFromCm = travelled;
+    if (travelled - bothFromCm > BORDER_CM) {
+      Serial.println("BORDER BAND - backing off");
+      borderBack = true; borderX = poseX; borderY = poseY;
+      searchCm += travelled - bothFromCm;           // nor is the run onto the band
+      setWheels(0, 0); return true;
+    }
+  } else bothFromCm = -1;
+
+  if (lBlack || rBlack) { whiteFromCm = -1; pivoting = false; }
 
   if (lBlack && !rBlack)      { lp = LEFT_BLACK_LEFT_PWM;  rp = LEFT_BLACK_RIGHT_PWM;  lastSide = +1; }
   else if (rBlack && !lBlack) { lp = RIGHT_BLACK_LEFT_PWM; rp = RIGHT_BLACK_RIGHT_PWM; lastSide = -1; }
   else if (!lBlack && !rBlack) {
-    if (whiteSinceMs == 0) whiteSinceMs = millis();
-    unsigned long white = millis() - whiteSinceMs;
-    if (white > LOST_MS + SEARCH_MAX_MS) lastSide = 0;          // give up searching
-    if (allowSearch && LOST_MS > 0 && lastSide != 0 && white > LOST_MS) {
-      searching = true;
-      if (lastSide > 0) { lp = SEARCH_FAST_PWM; rp = SEARCH_SLOW_PWM; }   // turn right
-      else              { lp = SEARCH_SLOW_PWM; rp = SEARCH_FAST_PWM; }   // turn left
+    if (whiteFromCm < 0) whiteFromCm = travelled;
+    if (allowSearch && lastSide != 0 && travelled - whiteFromCm >= LOST_CM) {
+      // the way the last correction turned (+1 = left)
+      int dir = lastSide > 0 ? (pwmToRate(LEFT_BLACK_RIGHT_PWM) > pwmToRate(LEFT_BLACK_LEFT_PWM) ? 1 : -1)
+                             : (pwmToRate(RIGHT_BLACK_RIGHT_PWM) > pwmToRate(RIGHT_BLACK_LEFT_PWM) ? 1 : -1);
+      // After the passage every real turn is LEFT (the corner ~70 deg, the
+      // hairpin ~140 deg; right bends are only ~10 deg): look LEFT first, up
+      // to 160 deg, then 40 deg right. The line behind is ~180 deg away, so
+      // the line going forward is always found first. (Video: "hairpin:
+      // pivot left if the line is lost".)
+      bool leftZone = alongLine > PASSAGE_TO_CM;
+      if (leftZone) dir = 1;
+      if (!pivoting) { pivoting = true; pivotPhase = 1; pivotStartTh = poseTh; Serial.println("LINE LOST - looking for it"); }
+      float maxDeg = leftZone ? 160 : SEARCH_MAX_DEG, backDeg = leftZone ? 40 : SEARCH_MAX_DEG;
+      float turned = rad2deg(wrapPi(poseTh - pivotStartTh)) * dir;   // + = toward the last side
+      if (pivotPhase == 1) {                                         // 1. toward the last side
+        if (turned < maxDeg) { setWheels(-dir * TURN_RATE, dir * TURN_RATE); return true; }
+        pivotPhase = 2;
+      }
+      if (pivotPhase == 2) {                                         // 2. the other way
+        if (turned > -backDeg) { setWheels(dir * TURN_RATE, -dir * TURN_RATE); return true; }
+        pivotPhase = 3;
+      }
+      if (!faceHeading(rad2deg(pivotStartTh))) return true;          // 3. back, then give up
+      lastSide = 0; pivoting = false; whiteFromCm = travelled;
+      Serial.println("LINE NOT FOUND - straight on");
     }
   }
 
-  setWheels(pwmToRate(lp), pwmToRate(rp));
-  if (searching) searchCm += travelled - lastTrav;   // not line distance
+  setWheels(k * pwmToRate(lp), k * pwmToRate(rp));
   lastTrav = travelled;
-  return searching;
+  return false;
 }
 
 // ==========================================
@@ -762,7 +823,14 @@ void setup() {
 float turnProgress = 0;
 float lastTh = 0;
 
+// IRs are read on every pass of loop() (thousands of times a second, like
+// your line follower) and any black is remembered until the next control
+// tick - at full speed the robot moves ~2.5 cm per tick, a whole line width.
+bool latchL = false, latchR = false;
+
 void loop() {
+  if (leftBlack())  latchL = true;
+  if (rightBlack()) latchR = true;
   unsigned long now = millis();
 
   // ---------- mode 1: just print counts while pushed by hand
@@ -788,7 +856,8 @@ void loop() {
   if (now - lastControl < CONTROL_MS) return;
   lastControl = now;
 
-  bool lB = leftBlack(), rB = rightBlack();
+  bool lB = latchL, rB = latchR;      // black at any moment since the last tick
+  latchL = latchR = false;
 
   // ---------- mode 2: drive 100 cm
   if (RUN_MODE == 2) {
@@ -954,39 +1023,69 @@ void loop() {
       break;
 
     case S_FIND_LINE:
-      // drive right until an IR sees the loop (about 39 cm)
-      if (lB || rB) {
+      // drive right until an IR sees the line at A (about 39 cm).
+      // Black in the first 12 cm is the green ring round T1 - ignored.
+      if ((lB || rB) && travelled - followStartDist > 12) {
+        Serial.println("LINE AT A");
+        legStart = travelled;
+        step = S_ONTO_LINE;
+      } else if (travelled - followStartDist > 70) {
+        Serial.println("LINE NOT FOUND - STOP");
+        step = S_DONE;
+      } else {
+        driveStraight(0, SEARCH_RATE);
+      }
+      break;
+
+    case S_ONTO_LINE:
+      // roll on until the turning point is over the line
+      if (travelled - legStart >= IR_FORWARD_CM) { setWheels(0, 0); lastTh = poseTh; turnProgress = 0; step = S_TURN_LINE; }
+      else driveStraight(0, SLOW_RATE);
+      break;
+
+    case S_TURN_LINE:
+      // turn LEFT onto the line, so it follows it UP the right side
+      turnProgress += wrapPi(poseTh - lastTh);
+      lastTh = poseTh;
+      if (turnProgress > deg2rad(30) && (lB || rB)) {
+        setWheels(0, 0);
         Serial.println("ON THE LINE - FOLLOWING");
         followStartDist = travelled;
         whiteSinceDist = -1;
         startFollow();
         step = S_FOLLOW;
-      } else if (travelled - followStartDist > 70) {
-        Serial.println("LINE NOT FOUND - STOP");
-        step = S_DONE;
+      } else if (turnProgress > deg2rad(160)) {
+        Serial.println("LINE LOST IN THE TURN - following anyway");
+        followStartDist = travelled; whiteSinceDist = -1; startFollow();
+        step = S_FOLLOW;
       } else {
-        setWheels(SEARCH_RATE, SEARCH_RATE);
+        setWheels(-TURN_RATE * 0.6, TURN_RATE * 0.6);
       }
       break;
 
     case S_FOLLOW: {
       float along = travelled - followStartDist - searchCm;
-      followLine(lB, rB, along, along < LINE_LENGTH_CM - 15);
+      bool afterHairpin = hairpinAt >= 0;
+      bool nearEnd = afterHairpin && along - hairpinAt > HAIRPIN_TO_END_CM - 12;
+      followLine(lB, rB, along, !nearEnd);
 
-      // line end: near the expected length and both IR on white
-      if (!lB && !rB) {
-        if (whiteSinceDist < 0) whiteSinceDist = along;
-      } else {
-        whiteSinceDist = -1;
+      // the hairpin is the landmark: from HAIRPIN_SEARCH_FROM_CM on, add up
+      // the LEFT turn (search pivots that come back cancel out). The
+      // hairpin turns ~140 deg left; the line ends HAIRPIN_TO_END_CM after it.
+      if (along > HAIRPIN_SEARCH_FROM_CM) {
+        if (!turnCounting) { turnCounting = true; turnSum = 0; turnPrevTh = poseTh; }
+        turnSum += wrapPi(poseTh - turnPrevTh);
+        turnPrevTh = poseTh;
+        if (!afterHairpin && !pivoting && turnSum > deg2rad(110)) {
+          hairpinAt = along;
+          Serial.println("HAIRPIN");
+        }
       }
-      bool nearEnd = along > LINE_LENGTH_CM - 15;
-      bool whiteLong = whiteSinceDist >= 0 && along - whiteSinceDist > 6;
-      if ((nearEnd && whiteLong) || along > LINE_LENGTH_CM + 25) {
+      if ((afterHairpin && along - hairpinAt >= HAIRPIN_TO_END_CM) || along > LINE_LENGTH_CM + 40) {
         // reset position: the line end is a known point on the map
-        float past = (whiteSinceDist >= 0) ? along - whiteSinceDist : 0;
         poseTh = deg2rad(LINE_END_HEADING);
-        poseX = LINE_END_X + (past - IR_FORWARD_CM) * cos(poseTh);
-        poseY = LINE_END_Y + (past - IR_FORWARD_CM) * sin(poseTh);
+        poseX = LINE_END_X - IR_FORWARD_CM * cos(poseTh);
+        poseY = LINE_END_Y - IR_FORWARD_CM * sin(poseTh);
         Serial.println("LINE END - GOING TO T2");
         step = S_FACE_MOUTH;
       }
