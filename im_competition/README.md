@@ -18,13 +18,14 @@ Raspberry Pi Pico robot (Arduino IDE), L298N through 6 optocouplers,
 
 | Sketch | What it does | Status |
 |---|---|---|
+| `line_follower_V2/` | Line follower FINAL + line-lost search + IR test mode and motor test mode (`TEST_MODE`) | Compiled, not yet run on the robot |
 | `line_follower_FINAL/` | **Working line follower**: encoder speed control per wheel, braking, speeds on the PWM scale (0 = full, 255 = stop) | Works on USB |
 | `approach1_walls/` | Approach 1: exact position from the 3 start walls, odometry to T1, drop, line, T2 | Not tested on robot |
 | `approach2_loop/` | Approach 2: rough position, then two chords across the black loop to find T1 | Not tested on robot |
 | `approach3_safe/` | Approach 3: short version with the team's wall rules (front < 12 cm back up to 27 cm, right keep 27 cm, stuck-wheel escape, border is not the line, clockwise turn onto the line) | Not tested on robot |
-| `tests/battery_check/` | Checks the supply voltage | |
-| `tests/encoder_test/` | Prints encoder counts | |
-| `tests/ir_test/` | Prints IR black/white | |
+| `tests/battery_check/` | Checks the supply voltage | **Old pins** |
+| `tests/encoder_test/` | Prints encoder counts | **Old pins** |
+| `tests/ir_test/` | Prints IR black/white | **Old pins**: use `line_follower_V2` TEST_MODE 1 instead |
 | `old_versions/` | Earlier line followers and the first wall follower (`wall_detect_forward`) | Kept for reference |
 
 Before running any approach: calibrate `COUNTS_PER_CM` and
