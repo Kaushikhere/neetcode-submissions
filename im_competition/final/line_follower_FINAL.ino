@@ -36,11 +36,12 @@
   the RIGHT wheel, and the motor on OUT3/OUT4 (ENB) is now the LEFT
   wheel. Each motor kept its own wires and encoder.
 
+  PINS MOVED (team's update):
   Motors (through optocouplers):
-    RIGHT wheel: ENA GP10, IN1 GP11, IN2 GP12
-    LEFT  wheel: ENB GP15, IN3 GP13, IN4 GP14
-  Line sensors: Left IR GP1, Right IR GP0
-  Encoders:     Left C1 GP18, C2 GP19 / Right C1 GP4, C2 GP5
+    RIGHT wheel: ENA GP0, IN1 GP1, IN2 GP2
+    LEFT  wheel: ENB GP5, IN3 GP3, IN4 GP4
+  Line sensors: Left IR GP16, Right IR GP17
+  Encoders:     Left C1 GP14, C2 GP15 / Right C1 GP12, C2 GP13
 
   Lower PWM = Faster, Higher PWM = Slower, 255 = Stop (inverted)
 */
@@ -53,8 +54,8 @@
 // ##########################################################
 
 // 1. GOING STRAIGHT (both IR sensors on white)
-int STRAIGHT_LEFT_PWM  = 30;
-int STRAIGHT_RIGHT_PWM = 30;
+int STRAIGHT_LEFT_PWM  = 0 + 20;
+int STRAIGHT_RIGHT_PWM = 80 + 30;
 
 // 2. LEFT IR SEES BLACK (robot turns RIGHT)
 int LEFT_BLACK_LEFT_PWM  = 10;     // left wheel
@@ -70,20 +71,20 @@ int RIGHT_BLACK_RIGHT_PWM = 10;    // right wheel
 // MOTOR PINS
 // ==========================================
 
-#define ENA 10
-#define IN1 11
-#define IN2 12
+#define ENA 0
+#define IN1 1
+#define IN2 2
 
-#define IN3 13
-#define IN4 14
-#define ENB 15
+#define IN3 3
+#define IN4 4
+#define ENB 5
 
 // ==========================================
 // LINE SENSOR PINS
 // ==========================================
 
-#define LEFT_IR  1
-#define RIGHT_IR 0
+#define LEFT_IR  16
+#define RIGHT_IR 17
 
 // What the IR module outputs over the BLACK line.
 // If the Serial Monitor shows "black" on white paper, change to LOW.
@@ -94,12 +95,11 @@ int RIGHT_BLACK_RIGHT_PWM = 10;    // right wheel
 // ==========================================
 
 // Motors swapped sides, and each encoder moved with its motor:
-// GP18/GP19 encoder is now on the LEFT wheel,
-// GP4/GP5 encoder is now on the RIGHT wheel.
-#define ENC_L_A 18
-#define ENC_L_B 19
-#define ENC_R_A 4
-#define ENC_R_B 5
+// Left wheel encoder on GP14/GP15, right wheel encoder on GP12/GP13.
+#define ENC_L_A 14
+#define ENC_L_B 15
+#define ENC_R_A 12
+#define ENC_R_B 13
 
 // -1 if that wheel counts DOWN while driving forward.
 // A motor on the other side turns the other way when going forward,
@@ -111,7 +111,7 @@ int RIGHT_SIGN = -1;
 
 // Full-power speed of a wheel (counts/50ms), used internally as the
 // starting guess for how much power a speed needs.
-float MAX_RATE = 60;
+float MAX_RATE = 70;
 
 // ==========================================
 // SPEED CONTROL

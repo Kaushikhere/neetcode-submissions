@@ -18,22 +18,23 @@ I'm building a robot for the IM Project Competition (Fall 2026). Please use this
 - Raspberry Pi Pico, Arduino IDE (earlephilhower arduino-pico core).
 - L298N driven through 6 PC817 optocouplers -> PWM and direction are INVERTED: analogWrite 0 = full speed, 255 = stop. analogWriteRange(255), analogWriteFreq(500). ENA/ENB jumpers removed, 5V-EN jumper on.
 - Two 12 V JGB37-520-type gear motors with Hall encoders. MOTORS WERE SWAPPED SIDES:
-  - RIGHT wheel = L298N OUT1/OUT2: ENA GP10, IN1 GP11, IN2 GP12. Forward = IN1 LOW, IN2 HIGH.
-  - LEFT wheel  = L298N OUT3/OUT4: IN3 GP13, IN4 GP14, ENB GP15. Forward = IN3 HIGH, IN4 LOW.
+  - RIGHT wheel = L298N OUT1/OUT2: ENA GP0, IN1 GP1, IN2 GP2. Forward = IN1 LOW, IN2 HIGH.
+  - LEFT wheel  = L298N OUT3/OUT4: IN3 GP3, IN4 GP4, ENB GP5. Forward = IN3 HIGH, IN4 LOW.
   - Brake = both IN pins LOW + EN analogWrite 0.
 - Encoders (VCC 3.3 V, interrupt on C1 CHANGE, compare C1 with C2):
-  - Left wheel:  C1 GP18, C2 GP19, LEFT_SIGN = 1
-  - Right wheel: C1 GP4,  C2 GP5,  RIGHT_SIGN = -1
-  - ~60 counts per 50 ms at full speed (wheels lifted).
-- Line IR sensors: LEFT IR GP1, RIGHT IR GP0, ON_BLACK = HIGH.
-- Right-side HC-SR04: TRIG GP16, ECHO GP17 (1k/2k divider).
+  - Left wheel:  C1 GP14, C2 GP15, LEFT_SIGN = 1
+  - Right wheel: C1 GP12, C2 GP13, RIGHT_SIGN = -1
+  - MAX_RATE = 70 counts per 50 ms in the code.
+- Line IR sensors: LEFT IR GP16, RIGHT IR GP17, ON_BLACK = HIGH.
+- Right-side HC-SR04: pins moved (GP16/GP17 are now the IRs) - new pins not decided yet.
 - Drop servo: GP2 (planned).
-- Power: 12 V battery -> L298N only. Pico from 3 x AA into VSYS (pin 39). Encoders and IRs on 3V3 (pin 36), NOT VBUS (VBUS is dead without USB - that caused "works on USB, not on battery"). Pico GND and L298N GND never joined.
+- Power: 12 V battery -> L298N only. Works on laptop USB; on a 3.3 V battery it misbehaves (encoders/ultrasonic likely need 5 V) - plan: USB power bank or 5 V regulator into VBUS.
+- Old note: Pico from 3 x AA into VSYS (pin 39). Encoders and IRs on 3V3 (pin 36), NOT VBUS (VBUS is dead without USB - that caused "works on USB, not on battery"). Pico GND and L298N GND never joined.
 
 ## Final line follower (working) - im_competition/final/line_follower_FINAL.ino
 - Each wheel has a speed target in encoder counts per 50 ms; a PI controller every 25 ms sets ENA/ENB and BRAKES a wheel that is too fast (fixes one motor coasting).
 - Settings on the PWM scale (0 = full, 255 = stop), converted by pwmToRate():
-  - Straight: left 30, right 100
+  - Straight: left 20, right 110 (MAX_RATE 70)
   - Left IR on black -> turn RIGHT: left 10, right 250
   - Right IR on black -> turn LEFT: left 250, right 10
   - Both black -> straight.
