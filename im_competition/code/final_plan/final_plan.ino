@@ -5,7 +5,8 @@
   ==========================================================
 
   THE RUN
-    1 ROOM    Front < 27 cm: back up. Else creep 10 cm forward.      (app 3 + app 2)
+    1 ROOM    Front < 27 cm: back up. Front clear: creep 10 cm.      (app 3 + app 2)
+              No echo (slanted wall?): spin where it is.
     2 SPIN    Spin once. Longest open stretch (nothing within 80 cm)  (app 2)
               = up the field. The shortest echoes behind, left and
               right give a ROUGH x, y, used only to aim at the curl.
@@ -68,6 +69,16 @@
        Stuck while reversing -> nudges forward.
      j Separate COUNTS_PER_CM for each wheel (mode 1 prints both).
      k RUN_MODE 7: line follower only, to check following on its own.
+    v3 (robot spun, then drove into the wall)
+     l CALIBRATED must be true before it drives (modes 0, 5, 6). With the
+       placeholder COUNTS_PER_CM the robot thinks it turned ~2x further
+       than it did, so the "open side" and every turn were wrong.
+     m Mode 2 is now a hand turn (motors off) that prints WHEEL_BASE_CM;
+       mode 1 prints COUNTS_PER_CM_L/R directly; mode 8 = motor spin check.
+     n A wall seen at a slant gives NO echo. That used to count as "open"
+       in the spin and as "nothing ahead" for safety. Now: no echo =
+       unknown in the spin (it listens to 4 m so the open field gives a
+       real far echo), and safety keeps the last close reading for 0.4 s.
 
   WHAT COULD GO WRONG AT THE LANDMARK, AND WHAT THE CODE DOES
     1 DECOY   A decoy ends about 5 cm above the top of the curl.
@@ -92,7 +103,8 @@
 
   CALIBRATE IN THIS ORDER
     RUN_MODE 4 -> check sensors      RUN_MODE 7 -> check line following
-    RUN_MODE 1 -> COUNTS_PER_CM_L/R  RUN_MODE 2 -> WHEEL_BASE_CM
+    RUN_MODE 1 -> COUNTS_PER_CM_L/R  RUN_MODE 2 -> WHEEL_BASE_CM (by hand)
+    RUN_MODE 8 -> spin check, then CALIBRATED = true
     RUN_MODE 6 -> IR_SIDES_FLIP      RUN_MODE 5 -> T1_X, T1_Y (teach)
     then RUN_MODE 0
 
@@ -109,7 +121,9 @@
 // 0 FULL RUN
 // 1 COUNT TEST : push the robot 100 cm by hand. COUNTS_PER_CM_L = L counts / 100,
 //                COUNTS_PER_CM_R = R counts / 100
-// 2 TURN TEST  : spins 360 deg. Went too far -> raise WHEEL_BASE_CM
+// 2 TURN TEST  : motors off. Turn the robot BY HAND exactly one full turn
+//                LEFT (anticlockwise seen from above) on the spot. It prints
+//                WHEEL_BASE_CM. (Set COUNTS_PER_CM_L/R with mode 1 first.)
 // 3 SAFETY TEST: drives forward with the wall rules on
 // 4 SENSOR TEST: prints FRONT, RIGHT and both IRs, motors off
 // 5 TEACH      : full run up to SQUARE, then motors off and prints x, y.
@@ -119,9 +133,15 @@
 //                stop square to the line. If it turns away: flip IR_SIDES_FLIP.
 // 7 LINE TEST  : put the robot on a line. It only follows the line
 //                (no fork, no slow zones, no end), with the lost-line search.
+// 8 SPIN CHECK : spins 360 deg with the motors. It must stop facing the
+//                way it started. If not, redo modes 1 and 2.
 int RUN_MODE = 0;
 
 // ===================== CALIBRATION =====================
+// The robot only drives (modes 0, 5, 6) when CALIBRATED is true. With the
+// placeholder values it thinks it turned twice as far as it really did,
+// picks the wrong "open side" and drives into a wall.
+bool  CALIBRATED = false;      // set true after modes 1 and 2
 float COUNTS_PER_CM_L = 12.0;  // mode 1
 float COUNTS_PER_CM_R = 12.0;  // mode 1
 float WHEEL_BASE_CM  = 15.0;   // mode 2
@@ -137,7 +157,8 @@ const float FRONT_STOP_CM = 12;   // closer than this: back up
 const float FRONT_ROOM_CM = 27;   // back up until this much room (20 cm swing + 7 spare)
 const float RIGHT_KEEP_CM = 27;   // keep the right wall at least this far
 const float WALL_SEEN_CM  = 15;   // black with a wall this close ahead = border
-const float OPEN_CM       = 80;   // further than this = open field
+const float OPEN_CM       = 80;   // open-field echo: at least this ...
+const float OPEN_FAR_CM   = 125;  // ... and longer than the board is wide when possible
 const float CREEP_FWD_CM  = 10;   // room step when the front is clear
 
 // ===================== MAP (practice board, cm) =====================
@@ -224,9 +245,11 @@ unsigned long runStart, lastTick, lastPrint, stuckSince = 0, stepT = 0;
 int escape = 0, escNudge = 0;        // 0 none, 1 backing, 2 turning away, 3 nudge
 float escStart = 0, escTurnTo = 0;
 
-signed char openB[72];               // spin: 1 open, -1 wall, 0 not seen
-float minD[72];                      // spin: shortest echo per 5 deg
+signed char openB[72];               // spin: 1 open, -1 wall, 0 no echo (unknown)
+float minD[72], maxD[72];            // spin: shortest / longest echo per 5 deg
 float spun = 0, lastTh = 0, aimDeg = 90;
+float lastF = -1; unsigned long lastFT = 0;   // last real front echo (for safety)
+long startL = 0, startR = 0;                   // counts at power-up (modes 1, 2)
 int roomMode = 0;                    // 1 backing up, 2 creeping forward
 
 bool irL = false, irR = false;       // black seen since the last tick (fast sampling)
@@ -282,8 +305,8 @@ float readUS(int t, int e, unsigned long timeoutUs) {
 }
 
 // ===================== MOTORS + ODOMETRY =====================
-void updateWheel(Wheel &w, long c) {
-  w.rate = (c - w.last) * 2.0; w.last = c;        // counts per 50 ms (tick = 25 ms)
+void updateWheel(Wheel &w, long c, float dtMs) {
+  w.rate = (c - w.last) * 50.0f / dtMs; w.last = c;   // counts per 50 ms (real time between ticks)
   if (w.target == 0) { w.brake = true; w.integ = 0; return; }
   int want = w.target > 0 ? 1 : -1;
   float along = w.rate * want, mag = fabs(w.target);
@@ -315,9 +338,13 @@ void odom() {
   fwd += d; travelled += fabs(d);
 }
 
+unsigned long lastCtl = 0;
 void tick() {
   odom();
-  updateWheel(L, cntL()); updateWheel(R, cntR());
+  unsigned long now = millis();
+  float dt = constrain((float)(now - lastCtl), 10.0f, 100.0f);
+  lastCtl = now;
+  updateWheel(L, cntL(), dt); updateWheel(R, cntR(), dt);
   outMotor(R, ENA, IN1, IN2, LOW);               // right: forward = IN1 LOW
   outMotor(L, ENB, IN3, IN4, HIGH);              // left:  forward = IN3 HIGH
 }
@@ -406,18 +433,38 @@ float minAround(float cDeg, float half) {         // shortest echo within +-half
 }
 
 void startSpin() {
-  for (int i = 0; i < 72; i++) { openB[i] = 0; minD[i] = 999; }
+  for (int i = 0; i < 72; i++) { openB[i] = 0; minD[i] = 999; maxD[i] = -1; }
   spun = 0; lastTh = th;
   stepTo(S_SPIN);
 }
 
 void analyseSpin() {
-  int bestStart = 0, bestLen = 0;                 // longest run of open bins = up the field
+  // OPEN = an echo longer than the start box is wide (a side wall can be
+  // over 80 cm away) - or, if the field has walls closer than that up
+  // ahead, at least 70% of the longest echo of the whole spin.
+  float far = 0;
+  for (int i = 0; i < 72; i++) far = fmaxf(far, maxD[i]);
+  float thr = constrain(0.7f * far, OPEN_CM, OPEN_FAR_CM);
+  for (int i = 0; i < 72; i++)
+    openB[i] = minD[i] < thr ? -1 : (maxD[i] > thr ? 1 : 0);
+  // Gaps between wall bins; the gap with the most REAL far echoes is up
+  // the field. "No echo" bins (slanted walls) never count as open.
+  int bestOpen = 0, bestLen = 0; float up = deg(th);
   for (int s = 0; s < 72; s++) {
-    int n = 0; while (n < 72 && openB[(s + n) % 72] == 1) n++;
-    if (n > bestLen) { bestLen = n; bestStart = s; }
+    if (openB[s] == -1 || openB[(s + 71) % 72] != -1) continue;   // gap starts after a wall
+    int n = 0, first = -1, last = -1, opens = 0;
+    while (n < 72 && openB[(s + n) % 72] != -1) {
+      if (openB[(s + n) % 72] == 1) { if (first < 0) first = n; last = n; opens++; }
+      n++;
+    }
+    if (opens > bestOpen) { bestOpen = opens; bestLen = last - first + 1; up = (s + (first + last) / 2.0) * 5; }
   }
-  float up = bestLen ? (bestStart + (bestLen - 1) / 2.0) * 5 : deg(th);
+  if (bestOpen == 0) {                            // no wall seen at all: average of open bins
+    float sx = 0, sy = 0;
+    for (int i = 0; i < 72; i++) if (openB[i] == 1) { sx += cos(rad(i * 5)); sy += sin(rad(i * 5)); bestLen++; }
+    if (bestLen) up = deg(atan2(sy, sx));
+  }
+  if (bestLen == 0) Serial.println("SPIN: NO OPEN SIDE FOUND - check the front sensor (mode 4)");
   float back = minAround(up + 180, 30), left = minAround(up + 90, 25), right = minAround(up - 90, 25);
 
   th = wrapPi(th - rad(up) + rad(90));            // field frame from now on: 90 = up the field
@@ -428,7 +475,8 @@ void analyseSpin() {
   x = constrain(x, 15.0f, 107.0f); y = constrain(y, 12.0f, 55.0f);
   aimDeg = 0.6 * deg(atan2(CURL_AIM_Y - y, CURL_AIM_X - x)) + 0.4 * 90;
 
-  Serial.print("SPIN: open width "); Serial.print(bestLen * 5);
+  Serial.print("SPIN: open if > "); Serial.print(thr, 0);
+  Serial.print(" cm, open width "); Serial.print(bestLen * 5);
   Serial.print("  back "); Serial.print(back); Serial.print(" left "); Serial.print(left);
   Serial.print(" right "); Serial.print(right);
   Serial.print("  rough x "); Serial.print(x, 0); Serial.print(" y "); Serial.print(y, 0);
@@ -518,8 +566,8 @@ void setup() {
   leftIrOnRight = (LB_R > LB_L) != IR_SIDES_FLIP;
 
   delay(2000);
-  L.last = oL = cntL(); R.last = oR = cntR();
-  runStart = lastTick = millis();
+  L.last = oL = startL = cntL(); R.last = oR = startR = cntR();
+  runStart = lastTick = lastCtl = millis();
   Serial.print("LEFT_IR (GP16) is on the robot's "); Serial.println(leftIrOnRight ? "RIGHT" : "LEFT");
   if (RUN_MODE == 6) { lockL = lockR = false; settleT = 0; swapTried = false; irSwap = false; stepTo(S_SQUARE); }
   else if (RUN_MODE == 7) { resetFollower(); stepTo(S_FOLLOW); }
@@ -530,10 +578,27 @@ void setup() {
 void loop() {
   sampleIR();                                     // as often as possible
 
-  if (RUN_MODE == 1) {
+  if (RUN_MODE == 1) {                            // push 100 cm by hand
     if (millis() - lastPrint > 300) { lastPrint = millis();
-      Serial.print("counts L "); Serial.print(cntL()); Serial.print("  R "); Serial.print(cntR());
-      Serial.println("   (after 100 cm: COUNTS_PER_CM_L = L/100, COUNTS_PER_CM_R = R/100)"); }
+      long l = cntL() - startL, r = cntR() - startR;
+      Serial.print("counts L "); Serial.print(l); Serial.print("  R "); Serial.print(r);
+      Serial.print("   after 100 cm: COUNTS_PER_CM_L = "); Serial.print(l / 100.0, 2);
+      Serial.print("  COUNTS_PER_CM_R = "); Serial.println(r / 100.0, 2); }
+    return;
+  }
+  if (RUN_MODE == 2) {                            // turn one full turn LEFT by hand
+    if (millis() - lastPrint > 300) { lastPrint = millis();
+      float dL = (cntL() - startL) / COUNTS_PER_CM_L, dR = (cntR() - startR) / COUNTS_PER_CM_R;
+      Serial.print("wheels L "); Serial.print(dL, 1); Serial.print(" cm  R "); Serial.print(dR, 1);
+      Serial.print(" cm   after ONE full turn left: WHEEL_BASE_CM = ");
+      Serial.println((dR - dL) / (2 * PI), 2); }
+    return;
+  }
+  if (!CALIBRATED && (RUN_MODE == 0 || RUN_MODE == 5 || RUN_MODE == 6)) {
+    motorsOff();
+    if (millis() - lastPrint > 1000) { lastPrint = millis();
+      Serial.println("NOT CALIBRATED: set COUNTS_PER_CM_L/R (mode 1) and WHEEL_BASE_CM (mode 2),"
+                     " then CALIBRATED = true. Motors stay off."); }
     return;
   }
   if (RUN_MODE != 7 && step != S_DONE && step != S_TEACH && millis() - runStart > 88000) {
@@ -547,17 +612,23 @@ void loop() {
   bool test34 = RUN_MODE == 3 || RUN_MODE == 4;
   bool needFront = guarded || step == S_POCKET || escape || test34;
   bool needRight = step == S_TO_CURL || step == S_POCKET || escape || test34;
-  float f = needFront ? readUS(F_TRIG, F_ECHO, 12000) : -1;
+  // while spinning listen longer (4 m) so the far end of the field gives a
+  // real echo; "no echo" then means a slanted wall, not open space
+  float f = needFront ? readUS(F_TRIG, F_ECHO, step == S_SPIN ? 25000 : 12000) : -1;
+  if (f > 0) { lastF = f; lastFT = millis(); }
+  // a wall seen at a slant often gives NO echo: for safety keep the last
+  // close reading for 0.4 s instead of treating it as "nothing ahead"
+  float fSafe = (f < 0 && lastF > 0 && lastF < 40 && millis() - lastFT < 400) ? lastF : f;
   float r = needRight ? readUS(R_TRIG, R_ECHO, 8000) : -1;
   sampleIR();
   bool lB = irL, rB = irR;                        // black at any moment since the last tick
   irL = irR = false;
-  bool wallAhead = f > 0 && f < WALL_SEEN_CM;
+  bool wallAhead = fSafe > 0 && fSafe < WALL_SEEN_CM;
   bool localised = step >= S_FACE_T1 && step <= S_POINTER;
   bool black = (lB || rB) && !wallAhead && !(localised && atEdge());   // not the border
 
   // ---- test modes
-  if (RUN_MODE == 2) {
+  if (RUN_MODE == 8) {                            // spin check: must end facing the start way
     spun += fabs(wrapPi(th - lastTh)); lastTh = th;
     if (spun >= 2 * PI) { wheels(0, 0); tick(); motorsOff(); Serial.println("360 done"); while (true) delay(1000); }
     wheels(-TURN, TURN); tick(); return;
@@ -579,14 +650,14 @@ void loop() {
   }
 
   // ---- safety layer: only while driving in open space
-  if (escape) { runEscape(f, r); tick(); return; }
+  if (escape) { runEscape(fSafe, r); tick(); return; }
   if (guarded) {
     bool forward = L.target > 0 && R.target > 0;
-    if (forward && f > 0 && f < FRONT_STOP_CM) { startEscape(0); tick(); return; }
+    if (forward && fSafe > 0 && fSafe < FRONT_STOP_CM) { startEscape(0); tick(); return; }
     if (stalled()) {
       if (step == S_ROOM && roomMode == 1) { wheels(0, 0); Serial.println("ROOM: back wall reached"); startSpin(); }
       else if (L.target < 0 && R.target < 0) startEscape(1);                 // stuck reversing
-      else if (L.target * R.target < 0) startEscape((f < 0 || f > 20) ? 1 : -1);  // stuck turning
+      else if (L.target * R.target < 0) startEscape((fSafe < 0 || fSafe > 20) ? 1 : -1);  // stuck turning
       else startEscape(0);
       tick(); return;
     }
@@ -600,9 +671,12 @@ void loop() {
   switch (step) {
     // ---------- 1 ROOM: make space to spin
     case S_ROOM:
-      if (roomMode == 0) roomMode = (f > 0 && f < FRONT_ROOM_CM) ? 1 : 2;
+      if (roomMode == 0) {                        // no echo = maybe a slanted wall: don't creep
+        roomMode = fSafe < 0 ? 3 : (fSafe < FRONT_ROOM_CM ? 1 : 2);
+        if (roomMode == 3) { Serial.println("ROOM: no echo ahead - spinning where it is"); startSpin(); break; }
+      }
       if (roomMode == 1) {                        // wall ahead: back up (app 3)
-        if (f < 0 || f >= FRONT_ROOM_CM || legStart - fwd > 20) { wheels(0, 0); startSpin(); }
+        if (fSafe < 0 || fSafe >= FRONT_ROOM_CM || legStart - fwd > 20) { wheels(0, 0); startSpin(); }
         else wheels(-BACK, -BACK);
       } else {                                    // clear: creep forward (app 2)
         if (fwd - legStart >= CREEP_FWD_CM) { wheels(0, 0); startSpin(); }
@@ -613,8 +687,7 @@ void loop() {
     // ---------- 2 SPIN: find the open side, rough x, y
     case S_SPIN: {
       int b = binOf(th);
-      if (f < 0 || f > OPEN_CM) openB[b] = 1; else if (openB[b] == 0) openB[b] = -1;
-      if (f > 0) minD[b] = fminf(minD[b], f);
+      if (f > 0) { minD[b] = fminf(minD[b], f); maxD[b] = fmaxf(maxD[b], f); }   // no echo = unknown
       spun += fabs(wrapPi(th - lastTh)); lastTh = th;
       if (spun < 2 * PI + rad(10)) wheels(-TURN * 0.7, TURN * 0.7);
       else { wheels(0, 0); analyseSpin(); stepTo(S_AIM); }
