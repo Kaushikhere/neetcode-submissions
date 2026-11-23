@@ -43,6 +43,7 @@ I'm building a robot for the IM Project Competition (Fall 2026). Please use this
 - Repo: kaushikhere/neetcode-submissions, branch claude/wall-following-ultrasonic-robot-x8l7lw, folder im_competition/
 - approach1_walls/approach1_walls.ino (+ APPROACH_1.md): APPROACH 1 full run (RUN_MODE 1-3 calibration, 4 position test, 5 to-T1 test, 0 full run). Finds start position by spinning with the right ultrasonic against the 3 start walls, refines on the back wall and nearer side wall, drives to T1 by encoder odometry with a loop-edge correction, drops, follows the line, resets pose at the line end, goes to T2. Not yet tested on the robot; COUNTS_PER_CM and WHEEL_BASE_CM must be calibrated.
 - approach2_loop/approach2_loop.ino (+ APPROACH_2.md): APPROACH 2 - rough wall sweep only, then two chords across the black loop round T1; the 4 line points are fitted to the loop shape from the map (shift only) to place the robot; servo drop at T1; rest same as approach 1. Needs the loop to exist on the competition board.
+- approach3_safe/approach3_safe.ino (+ APPROACH_3.md): APPROACH 3 - shorter (~440 lines) run with the team's wall rules as a safety layer (front<9 -> back up to 20 cm and turn away; right<20 -> steer away then back to planned heading; stalled wheels -> back up; black ignored as line when a wall is <15 cm ahead or at board edge). Mission: open side -> square to right wall (x, heading) -> up to the loop edge (y) -> T1 drop -> line -> T2.
 - battery_check/battery_check.ino, encoder_test/, ir_test/, field_map.h.
 
 ## Lessons / rules for code
