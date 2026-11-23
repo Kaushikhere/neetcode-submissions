@@ -26,8 +26,8 @@ I'm building a robot for the IM Project Competition (Fall 2026). Please use this
   - Right wheel: C1 GP12, C2 GP13, RIGHT_SIGN = -1
   - MAX_RATE = 70 counts per 50 ms in the code.
 - Line IR sensors: LEFT IR GP16, RIGHT IR GP17, ON_BLACK = HIGH.
-- Right-side HC-SR04: pins moved (GP16/GP17 are now the IRs) - new pins not decided yet.
-- Drop servo: GP2 (planned).
+- Two HC-SR04 (5 V, ECHO via 1k/2k divider): RIGHT side TRIG GP6 / ECHO GP7, FRONT TRIG GP8 / ECHO GP9.
+- Drop servo: GP10.
 - Power: 12 V battery -> L298N only. Works on laptop USB; on a 3.3 V battery it misbehaves (encoders/ultrasonic likely need 5 V) - plan: USB power bank or 5 V regulator into VBUS.
 - Old note: Pico from 3 x AA into VSYS (pin 39). Encoders and IRs on 3V3 (pin 36), NOT VBUS (VBUS is dead without USB - that caused "works on USB, not on battery"). Pico GND and L298N GND never joined.
 

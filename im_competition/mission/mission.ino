@@ -3,48 +3,55 @@
        IM COMPETITION 1 - FULL RUN
        Raspberry Pi Pico + L298N + 6 optocouplers
        2 encoder motors, 2 IR line sensors,
-       right HC-SR04, servo for the drop
+       2 HC-SR04 (RIGHT side + FRONT), servo for the drop
   ==========================================
+
+  WHERE THE TWO ULTRASONICS GO
+    RIGHT sensor : on the right side, pointing straight out to the
+                   right (90 degrees to the direction of travel).
+    FRONT sensor : at the front, in the middle, pointing straight
+                   ahead.
+    Both level, at the same height, LOWER than 15 cm (so they also
+    see the 15 cm walls near T2). Both on 5 V, ECHO through a
+    1k / 2k divider.
 
   WHAT IT DOES (from any start position and direction)
 
-   1. FIND POSITION  a) Spins once on the spot, reading the right
-                        ultrasonic. The three start walls show up as
-                        close readings, the open side (up the field)
-                        as far ones -> rough x, y and heading.
-                     b) Turns so the sensor faces the back wall and
-                        scans it slowly -> exact heading and y.
-                     c) Turns so the sensor faces the NEARER side wall
-                        and reads it standing still -> exact x.
-                     Works next to the left wall, the right wall or in
-                     the middle, facing any direction.
-   2. GO TO T1       Turns to face T1 and drives straight to it with
-                     the encoders. When an IR crosses the black loop
-                     around T1, it corrects its position from the map.
-   3. DROP           Servo opens, the item falls on T1.
+   1. FIND POSITION  a) Spins once on the spot reading BOTH sensors.
+                        Start walls read close, the open side (up the
+                        field) reads far -> rough x, y, heading.
+                     b) Turns so one sensor faces the back wall and
+                        the other faces the NEARER side wall, then
+                        scans +-40 degrees -> exact heading, x and y
+                        at the same time.
+   2. GO TO T1       Turns to T1 and drives there with the encoders.
+                     Crossing the black loop round T1 corrects the
+                     position from the map.
+   3. DROP           Servo opens over T1.
    4. TO THE LINE    Faces right, drives until an IR sees the loop.
-   5. FOLLOW LINE    Your line follower (same speeds as your final
-                     code) up to the end of the line.
-   6. GO TO T2       Resets its position at the line end (known on the
-                     map), drives into the pocket and turns so the
-                     pointer ends on T2.
+   5. FOLLOW LINE    Your line-follower speeds, to the end of the line.
+   6. INTO POCKET    Resets position at the line end, lines up with
+                     the T2 pocket, drives in staying centred with
+                     the RIGHT sensor and stops with the FRONT sensor
+                     so the pointer ends on T2.
    7. STOP           Motors off. Everything stops at 88 s anyway.
 
-  FIRST: set RUN_MODE below to the calibration modes, one by one,
-  and fill in COUNTS_PER_CM and WHEEL_BASE_CM. The whole run depends
-  on those two numbers.
+  FIRST: run RUN_MODE 1, 2, 3 and fill in COUNTS_PER_CM and
+  WHEEL_BASE_CM. Measure the sensor offsets (CALIBRATION block).
 
   BOARD COORDINATES (cm), from the field map
-    origin = start-end LEFT corner of the board,
-    x = to the right (0..122), y = up the field (0..244)
-    heading: 0 = facing right, 90 = facing up the field
+    origin = start-end LEFT corner, x = right (0..122),
+    y = up the field (0..244); heading 0 = facing right,
+    90 = facing up the field
 
   PINS
-    Left wheel  : ENB GP15, IN3 GP13, IN4 GP14, encoder GP18/GP19
-    Right wheel : ENA GP10, IN1 GP11, IN2 GP12, encoder GP4/GP5
-    Left IR GP1, Right IR GP0
-    Right HC-SR04: TRIG GP16, ECHO GP17
-    Drop servo   : GP2
+    Right wheel : ENA GP0, IN1 GP1, IN2 GP2   (L298N OUT1/OUT2)
+    Left wheel  : IN3 GP3, IN4 GP4, ENB GP5   (L298N OUT3/OUT4)
+    Encoders    : left C1 GP14, C2 GP15 / right C1 GP12, C2 GP13
+    Line IR     : left GP16, right GP17
+    RIGHT HC-SR04: TRIG GP6, ECHO GP7  (ECHO via 1k/2k divider)
+    FRONT HC-SR04: TRIG GP8, ECHO GP9  (ECHO via 1k/2k divider)
+    Drop servo  : GP10
 */
 
 #include <Servo.h>
@@ -60,7 +67,7 @@
 //   3 = TURN TEST: robot spins 360 degrees. Turned too far ->
 //       raise WHEEL_BASE_CM; not far enough -> lower it
 //   4 = POSITION TEST: does step 1 only and prints x, y, heading.
-//       Put the robot on a known spot and compare.
+//       Put the robot on a known spot and compare (tape measure).
 //   5 = T1 TEST: steps 1-3 only (find position, go to T1, drop)
 int RUN_MODE = 4;
 
@@ -74,12 +81,13 @@ float WHEEL_BASE_CM = 15.0;    // centre of left wheel to centre of
 
 // Where the sensors are, measured from the robot's turning point
 // (the middle between the two wheels):
-float US_SIDE_CM   = 10.0;  // ultrasonic face, to the right of centre
+float US_SIDE_CM    = 10.0; // RIGHT ultrasonic face, right of centre
+float US_FRONT_CM   = 12.0; // FRONT ultrasonic face, ahead of centre
 float IR_FORWARD_CM = 8.0;  // IR sensors, in front of centre
 float IR_SIDE_CM    = 2.5;  // each IR, left/right of centre
 
-// How far the pointer reaches in front of the turning point
-float POINTER_REACH_CM = 14.0;
+// How far the pointer tip sticks out IN FRONT OF THE FRONT SENSOR
+float POINTER_BEYOND_SENSOR_CM = 2.0;
 
 // Drop servo angles
 int SERVO_CLOSED = 0;
@@ -96,6 +104,13 @@ float WALL_BACK_Y  = 0;     // inner face of the back start wall
 float T1_X = 58.4, T1_Y = 97.0;     // target 1 (green ring)
 float T2_X = 51.1, T2_Y = 179.5;    // target 2 (estimate)
 float POCKET_HEADING = -62.7;       // facing into the T2 pocket
+float T2_FROM_WALL_CM = 3.0;        // T2 is this far in front of the
+                                    // pocket's back wall
+float POCKET_MOUTH_X = 39.1, POCKET_MOUTH_Y = 202.6; // just outside the
+                                    // pocket opening, on its centre line
+float POCKET_CENTRE_TO_RAIL_CM = 19.6; // pocket centre line to the
+                                    // inner face of either side wall
+float POCKET_MAX_DRIVE_CM = 35;     // safety: never drive further in
 
 float LINE_END_X = 50.5, LINE_END_Y = 202.0;  // end of the black line
 float LINE_END_HEADING = -22.0;               // last part of the line
@@ -120,8 +135,8 @@ float SWEEP_RATE = 5;    // slow spin while finding position
 float SEARCH_RATE = 10;  // driving towards the line
 
 // Line following: YOUR final values (0 = full, 255 = stop)
-int STRAIGHT_LEFT_PWM  = 0 + 30;
-int STRAIGHT_RIGHT_PWM = 70 + 30;
+int STRAIGHT_LEFT_PWM  = 0 + 20;
+int STRAIGHT_RIGHT_PWM = 80 + 30;
 int LEFT_BLACK_LEFT_PWM  = 10;    // left IR black -> turn right
 int LEFT_BLACK_RIGHT_PWM = 250;
 int RIGHT_BLACK_LEFT_PWM  = 250;  // right IR black -> turn left
@@ -138,38 +153,40 @@ unsigned long RUN_TIME_LIMIT_MS = 88000;   // rules: off by 90 s
 //   PINS
 // ##########################################################
 
-#define ENA 10
-#define IN1 11
-#define IN2 12
-#define IN3 13
-#define IN4 14
-#define ENB 15
+#define ENA 0
+#define IN1 1
+#define IN2 2
+#define IN3 3
+#define IN4 4
+#define ENB 5
 
-#define LEFT_IR  1
-#define RIGHT_IR 0
+#define LEFT_IR  16
+#define RIGHT_IR 17
 #define ON_BLACK HIGH
 
-#define ENC_L_A 18
-#define ENC_L_B 19
-#define ENC_R_A 4
-#define ENC_R_B 5
+#define ENC_L_A 14
+#define ENC_L_B 15
+#define ENC_R_A 12
+#define ENC_R_B 13
 int LEFT_SIGN = 1;
 int RIGHT_SIGN = -1;
 
-#define TRIG_PIN 16
-#define ECHO_PIN 17
+#define R_TRIG 6     // RIGHT ultrasonic
+#define R_ECHO 7
+#define F_TRIG 8     // FRONT ultrasonic
+#define F_ECHO 9
 
-#define SERVO_PIN 2
+#define SERVO_PIN 10
 
 // ##########################################################
 //   INTERNAL SETTINGS
 // ##########################################################
 
-float MAX_RATE = 60;
+float MAX_RATE = 70;
 unsigned long CONTROL_MS = 25;
 float KP_SPEED = 0.012;
 float KI_SPEED = 0.002;
-float BRAKE_MARGIN = 6;
+float BRAKE_MARGIN = 10;
 float KP_HEADING = 25;    // steering per radian of heading error
 
 // ==========================================
@@ -187,8 +204,8 @@ struct Wheel {
 };
 
 enum Step {
-  S_SWEEP, S_ALIGN_BACK, S_SCAN_BACK, S_FACE_SIDE, S_READ_SIDE, S_FACE_T1, S_GO_T1, S_DROP, S_FACE_LINE, S_FIND_LINE,
-  S_FOLLOW, S_FACE_T2, S_GO_T2, S_FINAL_TURN, S_DONE
+  S_SWEEP, S_ALIGN, S_SCAN, S_FACE_T1, S_GO_T1, S_DROP, S_FACE_LINE, S_FIND_LINE,
+  S_FOLLOW, S_FACE_MOUTH, S_GO_MOUTH, S_FACE_POCKET, S_IN_POCKET, S_DONE
 };
 
 Wheel L, R;
@@ -209,17 +226,17 @@ unsigned long lastPrint = 0;
 
 float sweepStartTh = 0;
 
-// fine scan of the back wall
+// fine scan: both sensors, around heading SCAN_CENTRE
 const int SCAN_MAX = 200;
 float scanTh[SCAN_MAX];
-float scanD[SCAN_MAX];
+float scanF[SCAN_MAX];        // front sensor
+float scanR[SCAN_MAX];        // right sensor
 int scanN = 0;
-float SCAN_HALF_DEG = 30;     // scan back wall from -30 to +30 degrees
+float SCAN_HALF_DEG = 40;
+float scanCentreDeg = 0;      // 0 = near right wall, -90 = near left wall
+bool nearRightWall = true;
 
-// side wall reading
-bool useRightWall = true;
-float sideReadings[9];
-int sideN = 0;
+float pocketStartDist = 0;
 bool loopFixed = false;
 bool prevAnyBlack = false;
 float followStartDist = 0;
@@ -279,17 +296,20 @@ float pwmToRate(int pwm) {
 bool leftBlack()  { return digitalRead(LEFT_IR)  == ON_BLACK; }
 bool rightBlack() { return digitalRead(RIGHT_IR) == ON_BLACK; }
 
-// Right ultrasonic, cm. -1 = no echo (nothing within ~2.5 m)
-float readUltrasonic() {
-  digitalWrite(TRIG_PIN, LOW);
+// One ultrasonic reading in cm. -1 = no echo (nothing within ~2.5 m)
+float readUS(int trig, int echo) {
+  digitalWrite(trig, LOW);
   delayMicroseconds(2);
-  digitalWrite(TRIG_PIN, HIGH);
+  digitalWrite(trig, HIGH);
   delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
-  long us = pulseIn(ECHO_PIN, HIGH, 15000);
+  digitalWrite(trig, LOW);
+  long us = pulseIn(echo, HIGH, 15000);
   if (us == 0) return -1;
   return us * 0.0343 / 2.0;
 }
+
+float readRight() { return readUS(R_TRIG, R_ECHO); }
+float readFront() { return readUS(F_TRIG, F_ECHO); }
 
 // ==========================================
 // WHEEL SPEED CONTROL (with braking, both directions)
@@ -465,13 +485,24 @@ float windowMin(float dirDeg) {
   return m;
 }
 
-void recordSweepReading() {
-  float d = readUltrasonic();
-  if (d < 0) return;
-  // ultrasonic points to the robot's RIGHT
-  float dirDeg = rad2deg(poseTh) - 90.0;
+// store a reading by the direction the SENSOR points. Distances are
+// stored from the robot's turning point (sensor offset added).
+void storeBin(float dirDeg, float dFromCentre) {
   int b = (((int)lround(dirDeg / 5.0)) % BINS + BINS) % BINS;
-  if (d < sweepMin[b]) sweepMin[b] = d;
+  if (dFromCentre < sweepMin[b]) sweepMin[b] = dFromCentre;
+}
+
+bool sweepFrontTurn = true;   // read the two sensors in turns
+
+void recordSweepReading() {
+  if (sweepFrontTurn) {
+    float d = readFront();
+    if (d > 0) storeBin(rad2deg(poseTh), d + US_FRONT_CM);
+  } else {
+    float d = readRight();
+    if (d > 0) storeBin(rad2deg(poseTh) - 90.0, d + US_SIDE_CM);
+  }
+  sweepFrontTurn = !sweepFrontTurn;
 }
 
 void solvePosition() {
@@ -495,11 +526,11 @@ void solvePosition() {
   float dRight = windowMin(up - 90);
 
   // 3. position. Readings over 120 cm are not start walls.
-  float y = (dBack < 120) ? WALL_BACK_Y + dBack + US_SIDE_CM : 25;
+  float y = (dBack < 130) ? WALL_BACK_Y + dBack : 25;
 
-  bool okL = dLeft < 120, okR = dRight < 120;
-  float xL = WALL_LEFT_X + dLeft + US_SIDE_CM;
-  float xR = WALL_RIGHT_X - dRight - US_SIDE_CM;
+  bool okL = dLeft < 130, okR = dRight < 130;
+  float xL = WALL_LEFT_X + dLeft;
+  float xR = WALL_RIGHT_X - dRight;
   float x;
   if (okL && okR && fabs(xL - xR) < 15) x = (xL + xR) / 2;
   else if (okL && (!okR || dLeft < dRight)) x = xL;
@@ -521,51 +552,71 @@ void solvePosition() {
   Serial.print("  heading = "); Serial.println(rad2deg(poseTh));
 }
 
-// Fine scan of the back wall: the readings form a V around the
-// direction where the sensor is square to the wall. The middle of
-// the V's two sides gives the exact heading; the bottom gives y.
-void solveBackWall() {
-  if (scanN < 10) { Serial.println("BACK SCAN: too few readings, keeping rough heading"); return; }
-
+// A flat wall scanned by a sensor gives a V of readings: they are
+// shortest when the sensor is square to the wall. The middle of the
+// V's two sides is the heading at which it was square.
+// Returns false if the V is not clean (another wall got in the way).
+bool squareHeading(float d[], float &squareTh, float &minD) {
   float m = 999;
-  for (int i = 0; i < scanN; i++) if (scanD[i] < m) m = scanD[i];
+  for (int i = 0; i < scanN; i++) if (d[i] > 0 && d[i] < m) m = d[i];
+  if (m > 150) return false;
   float thr = m + max(1.5f, 0.05f * m);
 
   int i1 = -1, i2 = -1;
-  for (int i = 0; i < scanN; i++) if (scanD[i] <= thr) { i1 = i; break; }
-  for (int i = scanN - 1; i >= 0; i--) if (scanD[i] <= thr) { i2 = i; break; }
+  for (int i = 0; i < scanN; i++) if (d[i] > 0 && d[i] <= thr) { i1 = i; break; }
+  for (int i = scanN - 1; i >= 0; i--) if (d[i] > 0 && d[i] <= thr) { i2 = i; break; }
+  if (i1 <= 0 || i2 >= scanN - 1 || i2 <= i1) return false;
 
-  // both sides of the V must be inside the scan, otherwise another
-  // wall got in the way: keep the rough heading
-  if (i1 <= 0 || i2 >= scanN - 1 || i2 <= i1) {
-    Serial.println("BACK SCAN: V not clean, keeping rough heading");
-    return;
-  }
+  squareTh = (scanTh[i1] + scanTh[i2]) / 2.0;
+  minD = m;
+  // rough heading is good to ~10 deg; a bigger answer is a bad scan
+  return fabs(wrapPi(squareTh - deg2rad(scanCentreDeg))) < deg2rad(12);
+}
 
-  float squareTh = (scanTh[i1] + scanTh[i2]) / 2.0;   // robot heading when square
-
-  // the rough heading is good to about 10 degrees; a bigger
-  // correction means a side wall spoiled the scan
-  if (fabs(squareTh) > deg2rad(12)) {
-    Serial.println("BACK SCAN: correction too big, keeping rough heading");
-    return;
-  }
-
-  // y = closest readings around the square direction
+// mean reading within 4 degrees of a heading
+float readingAt(float d[], float th) {
   float sum = 0; int n = 0;
-  for (int i = 0; i < scanN; i++) {
-    if (fabs(wrapPi(scanTh[i] - squareTh)) < deg2rad(4)) { sum += scanD[i]; n++; }
+  for (int i = 0; i < scanN; i++)
+    if (d[i] > 0 && fabs(wrapPi(scanTh[i] - th)) < deg2rad(4)) { sum += d[i]; n++; }
+  return (n > 0) ? sum / n : -1;
+}
+
+// Near the RIGHT wall: scan around heading 0.
+//   FRONT sensor sees the right wall, RIGHT sensor sees the back wall.
+// Near the LEFT wall: scan around heading -90.
+//   FRONT sensor sees the back wall, RIGHT sensor sees the left wall.
+void solveScan() {
+  float thF = 0, thR = 0, mF = 0, mR = 0;
+  bool okF = squareHeading(scanF, thF, mF);
+  bool okR = squareHeading(scanR, thR, mR);
+
+  float centre = deg2rad(scanCentreDeg);
+  float squareTh = centre;
+  if (okF && okR)  squareTh = (thF + thR) / 2.0;
+  else if (okF)    squareTh = thF;
+  else if (okR)    squareTh = thR;
+
+  float dF = readingAt(scanF, squareTh);
+  float dR = readingAt(scanR, squareTh);
+
+  // when both sensors are square, the robot truly faces scanCentreDeg
+  poseTh = wrapPi(poseTh - (squareTh - centre));
+
+  if (nearRightWall) {
+    if (dR > 0 && dR < 130) poseY = WALL_BACK_Y + dR + US_SIDE_CM;
+    if (dF > 0 && dF < 130) poseX = WALL_RIGHT_X - dF - US_FRONT_CM;
+  } else {
+    if (dF > 0 && dF < 130) poseY = WALL_BACK_Y + dF + US_FRONT_CM;
+    if (dR > 0 && dR < 130) poseX = WALL_LEFT_X + dR + US_SIDE_CM;
   }
-  float dBack = (n > 0) ? sum / n : m;
 
-  // when square to the back wall the robot truly faces heading 0
-  poseTh = wrapPi(poseTh - squareTh);
-  poseY = WALL_BACK_Y + dBack + US_SIDE_CM;
-
-  Serial.print("BACK SCAN: heading corrected by ");
-  Serial.print(rad2deg(-squareTh));
-  Serial.print(" deg, y = ");
-  Serial.println(poseY);
+  Serial.println("------ EXACT POSITION ------");
+  Serial.print("scan front ok: "); Serial.print(okF ? "yes" : "no");
+  Serial.print("  right ok: "); Serial.print(okR ? "yes" : "no");
+  Serial.print("  heading corrected by "); Serial.println(rad2deg(centre - squareTh));
+  Serial.print("x = "); Serial.print(poseX);
+  Serial.print("  y = "); Serial.print(poseY);
+  Serial.print("  heading = "); Serial.println(rad2deg(poseTh));
 }
 
 // ==========================================
@@ -636,8 +687,10 @@ void setup() {
   pinMode(LEFT_IR, INPUT);
   pinMode(RIGHT_IR, INPUT);
 
-  pinMode(TRIG_PIN, OUTPUT);
-  pinMode(ECHO_PIN, INPUT);
+  pinMode(R_TRIG, OUTPUT);
+  pinMode(R_ECHO, INPUT);
+  pinMode(F_TRIG, OUTPUT);
+  pinMode(F_ECHO, INPUT);
 
   pinMode(ENC_L_A, INPUT_PULLUP);
   pinMode(ENC_L_B, INPUT_PULLUP);
@@ -723,65 +776,41 @@ void loop() {
   switch (step) {
 
     case S_SWEEP: {
-      // spin slowly to the left once, recording the right ultrasonic
+      // spin slowly to the left once, reading both ultrasonics
       turnProgress += fabs(wrapPi(poseTh - lastTh));
       lastTh = poseTh;
       recordSweepReading();
       if (turnProgress >= 2 * PI + deg2rad(20)) {
         setWheels(0, 0);
         solvePosition();
-        step = S_ALIGN_BACK;
+        nearRightWall = poseX > 61;
+        scanCentreDeg = nearRightWall ? 0 : -90;
+        step = S_ALIGN;
       } else {
         setWheels(-SWEEP_RATE, SWEEP_RATE);
       }
       break;
     }
 
-    case S_ALIGN_BACK:
-      // sensor on the right faces the back wall when heading = 0
-      if (faceHeading(-SCAN_HALF_DEG)) { scanN = 0; step = S_SCAN_BACK; }
+    case S_ALIGN:
+      if (faceHeading(scanCentreDeg - SCAN_HALF_DEG)) { scanN = 0; step = S_SCAN; }
       break;
 
-    case S_SCAN_BACK: {
-      float d = readUltrasonic();
-      if (d > 0 && scanN < SCAN_MAX) { scanTh[scanN] = poseTh; scanD[scanN] = d; scanN++; }
-      if (poseTh >= deg2rad(SCAN_HALF_DEG)) {
-        setWheels(0, 0);
-        solveBackWall();
-        useRightWall = poseX > 61;           // read the nearer side wall
-        step = S_FACE_SIDE;
-      } else {
-        setWheels(-SWEEP_RATE * 0.6, SWEEP_RATE * 0.6);
+    case S_SCAN: {
+      // slow scan; each tick reads both sensors
+      if (scanN < SCAN_MAX) {
+        scanTh[scanN] = poseTh;
+        scanF[scanN] = readFront();
+        scanR[scanN] = readRight();
+        scanN++;
       }
-      break;
-    }
-
-    case S_FACE_SIDE:
-      // sensor (on the right) faces the right wall at heading 90,
-      // the left wall at heading -90
-      if (faceHeading(useRightWall ? 90 : -90)) { sideN = 0; step = S_READ_SIDE; }
-      break;
-
-    case S_READ_SIDE: {
-      setWheels(0, 0);
-      float d = readUltrasonic();
-      if (d > 0) sideReadings[sideN++] = d;
-      if (sideN >= 7) {
-        // median of 7 readings
-        for (int i = 0; i < sideN; i++)
-          for (int j = i + 1; j < sideN; j++)
-            if (sideReadings[j] < sideReadings[i]) { float t = sideReadings[i]; sideReadings[i] = sideReadings[j]; sideReadings[j] = t; }
-        float dSide = sideReadings[sideN / 2];
-        if (dSide < 120) {
-          poseX = useRightWall ? WALL_RIGHT_X - dSide - US_SIDE_CM
-                               : WALL_LEFT_X + dSide + US_SIDE_CM;
-        }
-        Serial.println("------ EXACT POSITION ------");
-        Serial.print("x = "); Serial.print(poseX);
-        Serial.print("  y = "); Serial.print(poseY);
-        Serial.print("  heading = "); Serial.println(rad2deg(poseTh));
+      if (wrapPi(poseTh - deg2rad(scanCentreDeg)) >= deg2rad(SCAN_HALF_DEG)) {
+        setWheels(0, 0);
+        solveScan();
         if (RUN_MODE == 4) { controlTick(); motorsOff(); while (true) delay(1000); }
         step = S_FACE_T1;
+      } else {
+        setWheels(-SWEEP_RATE * 0.6, SWEEP_RATE * 0.6);
       }
       break;
     }
@@ -856,32 +885,54 @@ void loop() {
         poseX = LINE_END_X + (past - IR_FORWARD_CM) * cos(poseTh);
         poseY = LINE_END_Y + (past - IR_FORWARD_CM) * sin(poseTh);
         Serial.println("LINE END - GOING TO T2");
-        step = S_FACE_T2;
+        step = S_FACE_MOUTH;
       }
       break;
     }
 
-    case S_FACE_T2: {
-      // stop with the POINTER on T2: aim the turning point short of T2
-      float h = deg2rad(POCKET_HEADING);
-      goalX = T2_X - POINTER_REACH_CM * cos(h);
-      goalY = T2_Y - POINTER_REACH_CM * sin(h);
-      float toGoal = rad2deg(atan2(goalY - poseY, goalX - poseX));
-      if (faceHeading(toGoal)) step = S_GO_T2;
+    case S_FACE_MOUTH: {
+      float h = rad2deg(atan2(POCKET_MOUTH_Y - poseY, POCKET_MOUTH_X - poseX));
+      if (faceHeading(h)) step = S_GO_MOUTH;
       break;
     }
 
-    case S_GO_T2:
-      if (driveTo(goalX, goalY)) step = S_FINAL_TURN;
+    case S_GO_MOUTH:
+      if (driveTo(POCKET_MOUTH_X, POCKET_MOUTH_Y)) step = S_FACE_POCKET;
       break;
 
-    case S_FINAL_TURN:
-      // turn on the spot so the pointer swings onto T2
+    case S_FACE_POCKET:
       if (faceHeading(POCKET_HEADING)) {
-        Serial.println("AT T2 - POINTER ON TARGET");
-        step = S_DONE;
+        pocketStartDist = travelled;
+        step = S_IN_POCKET;
       }
       break;
+
+    case S_IN_POCKET: {
+      // FRONT sensor: stop when the pointer tip reaches T2
+      float stopAt = T2_FROM_WALL_CM + POINTER_BEYOND_SENSOR_CM;
+      float dF = readFront();
+      if ((dF > 0 && dF <= stopAt) || travelled - pocketStartDist > POCKET_MAX_DRIVE_CM) {
+        setWheels(0, 0);
+        Serial.print("AT T2 - front wall at "); Serial.print(dF); Serial.println(" cm");
+        step = S_DONE;
+        break;
+      }
+      // RIGHT sensor: stay on the pocket's centre line
+      float dR = readRight();
+      float steer = 0;
+      if (dR > 0 && dR < 40) {
+        float err = dR - (POCKET_CENTRE_TO_RAIL_CM - US_SIDE_CM);   // + = too far left
+        steer = constrain(err * 0.6f, -4.0f, 4.0f);
+      }
+      // keep the heading too
+      float hErr = wrapPi(deg2rad(POCKET_HEADING) - poseTh);
+      steer -= constrain(KP_HEADING * hErr, -4.0f, 4.0f);   // + hErr = turn left
+      // slower as the wall gets close
+      float base = (dF > 0 && dF < stopAt + 10) ? SLOW_RATE * 0.6 : SLOW_RATE;
+      // too far left (err > 0) -> turn right: left wheel faster
+      setWheels(base + steer, base - steer);
+      break;
+    }
 
     case S_DONE:
       setWheels(0, 0);
