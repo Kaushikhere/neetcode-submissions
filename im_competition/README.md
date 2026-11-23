@@ -18,6 +18,7 @@ Raspberry Pi Pico robot (Arduino IDE), L298N through 6 optocouplers,
 
 | Sketch | What it does | Status |
 |---|---|---|
+| `final_plan/` | **Final Competition I plan**: approach 2 finds the position (curl ride + squaring on the main line), approach 3 safety, fixed line following. RUN_MODE 0-7 | Compiled + simulated, not yet run on the robot |
 | `line_follower_V2/` | Line follower FINAL + line-lost search + IR test mode and motor test mode (`TEST_MODE`) | Compiled, not yet run on the robot |
 | `line_follower_FINAL/` | **Working line follower**: encoder speed control per wheel, braking, speeds on the PWM scale (0 = full, 255 = stop) | Works on USB |
 | `approach1_walls/` | Approach 1: exact position from the 3 start walls, odometry to T1, drop, line, T2 | Not tested on robot |
