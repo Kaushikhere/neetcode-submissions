@@ -4,7 +4,7 @@
        "find T1 with the black loop"
        Raspberry Pi Pico + L298N + 6 optocouplers
        2 encoder motors, 2 IR line sensors,
-       2 HC-SR04 (RIGHT side + FRONT), servo for the drop
+       2 HC-SR04 (RIGHT side + FRONT)  (servo not used for now)
   ==========================================
 
   HOW THIS DIFFERS FROM APPROACH 1 (approach1_walls.ino)
@@ -20,13 +20,13 @@
         That gives its exact position.
     The line itself places the robot, so wheel slip and errors from
     the start do not carry over to T1.
-    It still DROPS WITH THE SERVO at T1, exactly like approach 1.
+    At T1 it STOPS for 1 s (no servo for now).
 
   WHAT IT DOES
    1. ROUGH POSITION  Spins once reading both ultrasonics -> rough
                       x, y and which way is up the field.
    2. FIND T1         Two chords across the black loop (above).
-   3. DROP            Servo opens over T1.
+   3. AT T1           Stops on T1 for 1 s (no servo for now).
    4. TO THE LINE     Faces right, drives until an IR sees the loop.
    5. FOLLOW LINE     Your line-follower speeds, to the end of the line.
    6. INTO POCKET     Lines up with the T2 pocket, stays centred with
@@ -46,10 +46,10 @@
     Line IR     : left GP16, right GP17
     RIGHT HC-SR04: TRIG GP6, ECHO GP7  (ECHO via 1k/2k divider)
     FRONT HC-SR04: TRIG GP8, ECHO GP9  (ECHO via 1k/2k divider)
-    Drop servo  : GP10
+    Drop servo  : GP10 (not used for now)
 */
 
-#include <Servo.h>
+// (no servo for now - it stops 1 s on T1 instead of dropping)
 
 // ##########################################################
 //   RUN MODE
@@ -64,7 +64,7 @@
 //   4 = LOOP TEST: steps 1-2, prints the loop match, drives to T1
 //       and stops there (no drop) - check how close it is
 //   5 = T1 TEST: steps 1-3 only (rough position, find T1, drop)
-int RUN_MODE = 4;
+int RUN_MODE = 0;
 
 // ##########################################################
 //   CALIBRATION  (measure these on the real board)
@@ -224,7 +224,6 @@ enum Step {
 };
 
 Wheel L, R;
-Servo dropServo;
 
 // robot pose in board coordinates
 float poseX = 0, poseY = 0, poseTh = 0;   // th in radians
@@ -737,8 +736,6 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(ENC_L_A), onLeftA, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENC_R_A), onRightA, CHANGE);
 
-  dropServo.attach(SERVO_PIN);
-  dropServo.write(SERVO_CLOSED);
 
   for (int b = 0; b < BINS; b++) sweepMin[b] = 999;
 
@@ -942,10 +939,8 @@ void loop() {
     case S_DROP: {
       setWheels(0, 0);
       controlTick();
-      Serial.println("AT T1 - DROP");
-      dropServo.write(SERVO_OPEN);
-      delay(600);
-      dropServo.write(SERVO_CLOSED);
+      Serial.println("AT T1 - stopped (no servo for now)");
+      delay(1000);                                 // stand on T1 for 1 s
       if (RUN_MODE == 5) { motorsOff(); while (true) delay(1000); }
       step = S_FACE_LINE;
       return;
