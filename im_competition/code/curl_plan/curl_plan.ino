@@ -8,6 +8,13 @@
   around T1, ride it backwards to its dead end - a point the robot
   cannot mistake - and measure everything from there.
 
+  STAGE 0  SCALE CHECK (automatic, ~3 s)
+    Your mode 1 (141 / 105 counts per cm) and mode 2 readings disagree
+    by 4.4x: one of them was not a full 100 cm / full turn. The robot
+    checks itself: it reads the front ultrasonic (a wall closer than
+    60 cm), moves 2.5 cm on the encoders, reads again. Echo changed
+    ~2.5 cm -> mode 1 numbers are right. Echo changed ~11 cm -> it
+    divides them by 4.39.
   STAGE 1  FIND THE OPEN SIDE
     One spin. Echoes come back from the three start walls; the side
     with no echo is up-field. Only open or not, no map. Face the open
@@ -70,9 +77,11 @@ int RUN_MODE = 0;
 // ===================== CALIBRATION (modes 1 and 2) =====================
 // These matter for the spin, the T1 hop and every turn. 12 / 15 are only
 // placeholders - measure them with modes 1 and 2.
-float COUNTS_PER_CM_L = 140.98; // your mode 1 result (pushed 100 cm)
+float COUNTS_PER_CM_L = 140.98; // your mode 1 result (stage 0 checks it)
 float COUNTS_PER_CM_R = 105.20; // your mode 1 result - the encoders differ by ~34%
-float WHEEL_BASE_CM   = 15.0;   // PLACEHOLDER - redo mode 2 with the numbers above
+float WHEEL_BASE_CM   = 15.0;   // wheel centre to wheel centre
+float BIG_SCALE       = 4.39;   // stage 0: mode 1 numbers / this if mode 1 was not 100 cm
+float SCALE_MOVE_CM   = 2.5;    // stage 0 test move (mode 1 cm)
 float IR_FORWARD_CM   = 8.0;    // middle of the two IRs, ahead of the axle centre
 float IR_GAP_CM       = 4.0;    // distance between the two IRs (width check)
 float US_SIDE_CM      = 10.0;   // right ultrasonic face, right of the axle centre
@@ -143,11 +152,11 @@ float MAX_RATE = 70;            // counts per 50 ms at full power
 // ===================== TYPES (before any function, for the IDE) =====================
 struct Wheel { float target = 0, rate = 0, integ = 0, duty = 0; int dir = 1; bool brake = true; long last = 0; };
 
-enum Step { S_SPIN, S_FACE_OPEN, S_TO_CURL, S_WIDTH, S_BORDER, S_ONTO_CURL, S_TURN_CURL,
+enum Step { S_SCALE, S_SPIN, S_FACE_OPEN, S_TO_CURL, S_WIDTH, S_BORDER, S_ONTO_CURL, S_TURN_CURL,
             S_RIDE, S_DE_BACK, S_HOP_FACE, S_HOP, S_DROP, S_FACE_RIGHT, S_TO_A,
             S_ONTO_A, S_TURN_A, S_FOLLOW, S_GO_MOUTH, S_FACE_POCKET, S_POCKET,
             S_POINTER, S_DONE };
-const char* NAMES[] = { "1 SPIN", "1 FACE OPEN", "2 TO CURL", "2 WIDTH CHECK", "2 BORDER",
+const char* NAMES[] = { "0 SCALE CHECK", "1 SPIN", "1 FACE OPEN", "2 TO CURL", "2 WIDTH CHECK", "2 BORDER",
                         "2 ONTO CURL", "3 TURN ONTO CURL", "3 RIDE", "3 DEAD END",
                         "4 FACE T1", "4 HOP", "4 AT T1", "4 FACE RIGHT", "4 TO A",
                         "5 ONTO A", "5 TURN ONTO LINE", "5 FOLLOW", "6 TO MOUTH",
@@ -170,6 +179,9 @@ bool spinOpen[36]; float spun = 0, prevTh = 0, upDeg = 90;
 
 float lStart, lEnd, rStart, rEnd;    // width check
 float lineW = 0;
+int   scPh = 0, scN = 0, scTry = 0, scDir = 1;   // stage 0
+float scBuf[5], scD0 = 0, scStart = 0, scMoved = 0;
+unsigned long scT = 0;
 float curlHeading = 90;              // stage 2 driving direction (moves inward after a border)
 float rideTurn = 0, rideTh = 0;      // stage 3: total turn while riding (+ = left)
 bool  onTop = false;
@@ -362,10 +374,9 @@ void setup() {
   runStart = lastTick = lastCtl = millis();
   for (int i = 0; i < 36; i++) spinOpen[i] = false;
   prevTh = th;
-  if (Serial && WHEEL_BASE_CM == 15.0) Serial.println("NOTE: WHEEL_BASE_CM is still the 15.0 placeholder - run mode 2");
   if (Serial) { Serial.print("CURL PLAN - RUN_MODE "); Serial.println(RUN_MODE); }
   if (RUN_MODE == 4) { startFollow(); go(S_FOLLOW); }
-  else go(S_SPIN);
+  else { scT = millis(); go(S_SCALE); }
 }
 
 // ===================== LOOP =====================
@@ -427,7 +438,7 @@ void loop() {
     else if (face(escTo)) escape = 0;
     tick(); return;
   }
-  if (openDrive && step != S_SPIN && L.target > 0 && R.target > 0 && f > 0 && f < FRONT_STOP_CM) {
+  if (openDrive && step != S_SPIN && step != S_SCALE && L.target > 0 && R.target > 0 && f > 0 && f < FRONT_STOP_CM) {
     // turn back toward the middle: heading left of up-field -> turn right
     escape = 1; escStart = fwd; escTo = deg(th) + (wrapPi(th - rad(90)) > 0 ? -35 : 35);
     if (Serial) Serial.println("WALL AHEAD - backing off");
@@ -436,6 +447,45 @@ void loop() {
 
   switch (step) {
     // ================= STAGE 1: FIND THE OPEN SIDE =================
+    // ================= STAGE 0: SCALE CHECK =================
+    case S_SCALE:
+      if (scPh == 0 || scPh == 2) {               // stopped: 5 steady front echoes
+        wheels(0, 0);
+        if (millis() - scT < 300) break;
+        if (f > 4 && f < 60) scBuf[scN++] = f;          // a near wall: the echo stays on one surface
+        scTry++;
+        if (scN < 5) {
+          if (scTry > 15) { scPh = 4; scT = millis(); scN = 0; scTry = 0; }   // no steady echo: turn
+          break;
+        }
+        for (int i = 0; i < 5; i++) for (int j = i + 1; j < 5; j++)
+          if (scBuf[j] < scBuf[i]) { float t = scBuf[i]; scBuf[i] = scBuf[j]; scBuf[j] = t; }
+        float d = scBuf[2];                       // median
+        scN = 0; scTry = 0;
+        // move toward the wall it can see (safe), unless that wall is too close
+        if (scPh == 0) { scD0 = d; scDir = d > 20 ? 1 : -1; scStart = fwd; scT = millis(); scPh = 1; break; }
+        float ratio = fabs(scD0 - d) / fmaxf(scMoved, 0.5f);   // echo cm per encoder cm
+        if (ratio > 2.2) { COUNTS_PER_CM_L /= BIG_SCALE; COUNTS_PER_CM_R /= BIG_SCALE; }
+        if (Serial) {
+          Serial.print("SCALE CHECK: encoders "); Serial.print(scMoved, 1);
+          Serial.print(" cm, echo "); Serial.print(fabs(scD0 - d), 1); Serial.print(" cm -> COUNTS_PER_CM ");
+          Serial.print(COUNTS_PER_CM_L, 1); Serial.print(" / "); Serial.println(COUNTS_PER_CM_R, 1);
+        }
+        spun = 0; prevTh = th; go(S_SPIN);
+      } else if (scPh == 1) {                      // the test move
+        if (fabs(fwd - scStart) >= SCALE_MOVE_CM || millis() - scT > 3000) {
+          wheels(0, 0); scMoved = fabs(fwd - scStart); scT = millis(); scPh = 2;
+        } else wheels(scDir * CREEP, scDir * CREEP);
+      } else {                                     // turn slowly until a steady wall echo
+        scTry = (f > 4 && f < 60) ? scTry + 1 : 0;
+        if (scTry >= 4) { wheels(0, 0); scT = millis(); scTry = 0; scPh = 0; }
+        else if (millis() - scT > 15000) {
+          Serial.println("SCALE CHECK: no wall echo - using mode 1 as measured");
+          spun = 0; prevTh = th; go(S_SPIN);
+        } else pivot(1);
+      }
+      break;
+
     case S_SPIN: {                                  // one spin: no echo / far echo = open
       int b = ((int)lround(deg(th) / 10) % 36 + 36) % 36;
       if (f < 0 || f > OPEN_CM) spinOpen[b] = true;
