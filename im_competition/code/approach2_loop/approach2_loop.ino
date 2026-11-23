@@ -152,6 +152,15 @@ int RIGHT_BLACK_RIGHT_PWM = 10;
 // the dead-end branch, change it.
 int FORK_IGNORE = 0;
 
+// LINE LOST: both IRs white for longer than LOST_MS -> turn towards
+// the side where the line was last seen, until an IR finds it again.
+// Not used near the line end (so the end is still detected), and it
+// gives up after SEARCH_MAX_MS.
+unsigned long LOST_MS = 400;        // 0 = never search
+unsigned long SEARCH_MAX_MS = 1500;
+int SEARCH_FAST_PWM = 60;           // outer wheel while searching
+int SEARCH_SLOW_PWM = 255;          // inner wheel while searching (255 = stopped)
+
 unsigned long RUN_TIME_LIMIT_MS = 88000;   // rules: off by 90 s
 
 // ##########################################################
@@ -662,19 +671,41 @@ void loopCorrection(bool lBlack, bool rBlack) {
 // STEP 5 helper: line following with your settings
 // ==========================================
 
-void followLine(bool lBlack, bool rBlack, float alongLine) {
+int lastSide = 0;                 // +1 left IR saw black last, -1 right IR
+unsigned long whiteSinceMs = 0;   // when both IRs went white
+float searchCm = 0, lastTrav = 0; // distance driven while searching
+
+void startFollow() { lastSide = 0; whiteSinceMs = 0; searchCm = 0; lastTrav = travelled; }
+
+// returns true while it is searching for a lost line
+bool followLine(bool lBlack, bool rBlack, float alongLine, bool allowSearch) {
   // at the fork, ignore one sensor so the robot stays on the line
   if (alongLine > FORK_AT_CM - 10 && alongLine < FORK_AT_CM + 20) {
     if (FORK_IGNORE == 0) rBlack = false;
     else lBlack = false;
   }
 
-  int lp, rp;
-  if (lBlack && !rBlack)      { lp = LEFT_BLACK_LEFT_PWM;  rp = LEFT_BLACK_RIGHT_PWM; }
-  else if (rBlack && !lBlack) { lp = RIGHT_BLACK_LEFT_PWM; rp = RIGHT_BLACK_RIGHT_PWM; }
-  else                        { lp = STRAIGHT_LEFT_PWM;    rp = STRAIGHT_RIGHT_PWM; }
+  int lp = STRAIGHT_LEFT_PWM, rp = STRAIGHT_RIGHT_PWM;
+  bool searching = false;
+  if (lBlack || rBlack) whiteSinceMs = 0;
+
+  if (lBlack && !rBlack)      { lp = LEFT_BLACK_LEFT_PWM;  rp = LEFT_BLACK_RIGHT_PWM;  lastSide = +1; }
+  else if (rBlack && !lBlack) { lp = RIGHT_BLACK_LEFT_PWM; rp = RIGHT_BLACK_RIGHT_PWM; lastSide = -1; }
+  else if (!lBlack && !rBlack) {
+    if (whiteSinceMs == 0) whiteSinceMs = millis();
+    unsigned long white = millis() - whiteSinceMs;
+    if (white > LOST_MS + SEARCH_MAX_MS) lastSide = 0;          // give up searching
+    if (allowSearch && LOST_MS > 0 && lastSide != 0 && white > LOST_MS) {
+      searching = true;
+      if (lastSide > 0) { lp = SEARCH_FAST_PWM; rp = SEARCH_SLOW_PWM; }   // turn right
+      else              { lp = SEARCH_SLOW_PWM; rp = SEARCH_FAST_PWM; }   // turn left
+    }
+  }
 
   setWheels(pwmToRate(lp), pwmToRate(rp));
+  if (searching) searchCm += travelled - lastTrav;   // not line distance
+  lastTrav = travelled;
+  return searching;
 }
 
 // ==========================================
@@ -933,6 +964,7 @@ void loop() {
         Serial.println("ON THE LINE - FOLLOWING");
         followStartDist = travelled;
         whiteSinceDist = -1;
+        startFollow();
         step = S_FOLLOW;
       } else if (travelled - followStartDist > 70) {
         Serial.println("LINE NOT FOUND - STOP");
@@ -943,8 +975,8 @@ void loop() {
       break;
 
     case S_FOLLOW: {
-      float along = travelled - followStartDist;
-      followLine(lB, rB, along);
+      float along = travelled - followStartDist - searchCm;
+      followLine(lB, rB, along, along < LINE_LENGTH_CM - 15);
 
       // line end: near the expected length and both IR on white
       if (!lB && !rB) {

@@ -94,6 +94,11 @@ int STRAIGHT_L = 20, STRAIGHT_R = 110;            // your line speeds
 int LBLACK_L = 10, LBLACK_R = 250;               // left IR black
 int RBLACK_L = 250, RBLACK_R = 10;               // right IR black
 int FORK_IGNORE = 0;                             // 0 ignore right IR at fork
+// LINE LOST: both IRs white longer than LOST_MS -> turn towards the side
+// the line was last seen until an IR finds it (not near the line end,
+// gives up after SEARCH_MAX_MS)
+unsigned long LOST_MS = 400, SEARCH_MAX_MS = 1500;   // LOST_MS 0 = never search
+int SEARCH_FAST_PWM = 60, SEARCH_SLOW_PWM = 255;     // outer / inner wheel
 
 // ---------------- PINS ----------------
 #define ENA 0
@@ -141,6 +146,9 @@ float spun = 0, lastTh = 0;
 float sqTh[120], sqR[120]; int sqN = 0;
 float legStart = 0, whiteFrom = -1, plannedDeg = 90;
 float hitX = 58, preLen = 0, turnToDeg = 0;     // where the loop bottom was met
+int lastSide = 0;                      // +1 left IR saw black last, -1 right IR
+unsigned long whiteSinceMs = 0;        // when both IRs went white
+float searchCm = 0, lastTrav = 0;      // distance driven while searching
 
 volatile long rawL = 0, rawR = 0;
 void isrL() { rawL += (digitalRead(ENC_L_A) != digitalRead(ENC_L_B)) ? 1 : -1; }
@@ -431,18 +439,35 @@ void loop() {
       if (face(turnToDeg)) {
         preLen = lenToJoin(x);                    // line from here to the right side
         legStart = travelled; whiteFrom = -1;
+        lastSide = 0; whiteSinceMs = 0; searchCm = 0; lastTrav = travelled;
         Serial.println("ON THE LINE - FOLLOWING");
         step = S_FOLLOW;
       }
       break;
 
     case S_FOLLOW: {
-      float along = travelled - legStart - preLen;  // measured from the right side
+      float along = travelled - legStart - preLen - searchCm;  // from the right side
       bool l = lB, rr = rB;
       if (along > FORK_AT_CM - 10 && along < FORK_AT_CM + 20) { if (FORK_IGNORE == 0) rr = false; else l = false; }
-      if (l && !rr) wheels(pwmToRate(LBLACK_L), pwmToRate(LBLACK_R));
-      else if (rr && !l) wheels(pwmToRate(RBLACK_L), pwmToRate(RBLACK_R));
-      else wheels(pwmToRate(STRAIGHT_L), pwmToRate(STRAIGHT_R));
+      bool searching = false;
+      if (l || rr) whiteSinceMs = 0;
+      if (l && !rr) { wheels(pwmToRate(LBLACK_L), pwmToRate(LBLACK_R)); lastSide = +1; }
+      else if (rr && !l) { wheels(pwmToRate(RBLACK_L), pwmToRate(RBLACK_R)); lastSide = -1; }
+      else {
+        wheels(pwmToRate(STRAIGHT_L), pwmToRate(STRAIGHT_R));
+        if (!l && !rr) {                          // both white: line lost?
+          if (whiteSinceMs == 0) whiteSinceMs = millis();
+          unsigned long white = millis() - whiteSinceMs;
+          if (white > LOST_MS + SEARCH_MAX_MS) lastSide = 0;          // give up
+          if (LOST_MS > 0 && lastSide != 0 && white > LOST_MS && along < LINE_LENGTH_CM - 15) {
+            searching = true;
+            if (lastSide > 0) wheels(pwmToRate(SEARCH_FAST_PWM), pwmToRate(SEARCH_SLOW_PWM));
+            else wheels(pwmToRate(SEARCH_SLOW_PWM), pwmToRate(SEARCH_FAST_PWM));
+          }
+        }
+      }
+      if (searching) searchCm += travelled - lastTrav;
+      lastTrav = travelled;
       if (!lB && !rB) { if (whiteFrom < 0) whiteFrom = along; } else whiteFrom = -1;
       if ((along > LINE_LENGTH_CM - 15 && whiteFrom >= 0 && along - whiteFrom > 6) || along > LINE_LENGTH_CM + 25) {
         th = rad(LINE_END_HEADING);
