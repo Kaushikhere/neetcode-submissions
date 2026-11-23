@@ -1,0 +1,740 @@
+<title>IM Robot Wiring</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a wiring sheet. The circuit diagram first (what connects to what),
+   then the two detail circuits, the breadboard as built, and the tables. */
+:root {
+  --bg: #f1f2ef;
+  --surface: #ffffff;
+  --fg: #1b1f23;
+  --muted: #5b636b;
+  --rule: #d7dbd4;
+  --pico-side: #e6eef8;     /* 3.3 V logic side */
+  --motor-side: #f8ebe2;    /* 12 V motor side */
+  --barrier: #b0306a;       /* the isolation line through the optocouplers */
+  --focus: #1f5fbf;
+  --warn-bg: #fbf1dc;
+  --warn-edge: #b37800;
+  --font-head: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171a; --surface: #1c2024; --fg: #e5e8ea; --muted: #9aa3ab; --rule: #2d3338;
+    --pico-side: #172331; --motor-side: #2b1f18; --barrier: #e0659c; --focus: #6d9bf0;
+    --warn-bg: #2f2713; --warn-edge: #f0b429;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14171a; --surface: #1c2024; --fg: #e5e8ea; --muted: #9aa3ab; --rule: #2d3338;
+  --pico-side: #172331; --motor-side: #2b1f18; --barrier: #e0659c; --focus: #6d9bf0;
+  --warn-bg: #2f2713; --warn-edge: #f0b429;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 28px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 44px; }
+h1, h2, h3 { font-family: var(--font-head); text-wrap: balance; margin: 0; line-height: 1.15; }
+h1 { font-size: clamp(28px, 4vw, 40px); font-weight: 600; }
+h2 { font-size: 24px; font-weight: 600; }
+h3 { font-size: 17px; font-weight: 600; }
+p { margin: 0; }
+code, .mono { font-family: var(--font-mono); font-size: 0.92em; }
+code { background: var(--surface); border: 1px solid var(--rule); padding: 0 4px; border-radius: 3px; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+
+header.top { display: grid; gap: 14px; max-width: 780px; }
+.lede { color: var(--muted); font-size: 16px; }
+.sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.side { padding: 12px 14px; border-radius: 6px; display: grid; gap: 4px; font-size: 14px; }
+.side b { font-family: var(--font-head); font-size: 16px; }
+.side.pico { background: var(--pico-side); }
+.side.motor { background: var(--motor-side); }
+.side.bar { border: 2px dashed var(--barrier); }
+
+section.block { display: grid; gap: 16px; }
+section.block > header { display: grid; gap: 6px; max-width: 780px; }
+section.block > header p { color: var(--muted); }
+
+figure { margin: 0; display: grid; gap: 10px; }
+figcaption { font-size: 14px; color: var(--muted); max-width: 780px; }
+.diagram { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); }
+.diagram svg { display: block; width: 100%; height: auto; min-width: 760px; color: var(--fg); }
+.diagram.board svg { min-width: 820px; }
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px; }
+.pair .diagram svg { min-width: 0; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend i { width: 22px; height: 5px; border-radius: 3px; display: inline-block; }
+
+.tablewrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 500; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.m { font-family: var(--font-mono); white-space: nowrap; font-variant-numeric: tabular-nums; }
+tr.group td { background: var(--bg); font-family: var(--font-head); font-weight: 600; font-size: 14px; }
+.tag { font-family: var(--font-mono); font-size: 11px; padding: 1px 6px; border-radius: 3px; border: 1px solid var(--rule); color: var(--muted); white-space: nowrap; }
+.tag.new { border-color: var(--focus); color: var(--focus); }
+.tag.spare { border-style: dashed; }
+
+.check { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; counter-reset: c; max-width: 860px; }
+.check li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; counter-increment: c; }
+.check li::before { content: counter(c); width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--fg); font: 600 12px/21px var(--font-mono); text-align: center; }
+.warn { background: var(--warn-bg); border-left: 3px solid var(--warn-edge); padding: 12px 16px; border-radius: 0 6px 6px 0; display: grid; gap: 6px; max-width: 860px; }
+
+.codehead { display: flex; justify-content: space-between; align-items: end; gap: 12px; flex-wrap: wrap; }
+.copy { font: 500 13px/1 var(--font-body); padding: 9px 14px; border-radius: 5px; border: 1px solid var(--rule); background: var(--surface); color: var(--fg); cursor: pointer; }
+.copy:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+pre.code { margin: 0; overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; font: 12.5px/1.55 var(--font-mono); max-height: 480px; }
+.steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 860px; }
+
+/* schematic text */
+.sch text { font-family: var(--font-mono); font-size: 11px; fill: currentColor; }
+.sch .t { font-family: var(--font-head); font-size: 13px; font-weight: 600; }
+.sch .s { font-size: 10px; fill: var(--muted); }
+.sch .hd { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.08em; fill: var(--muted); }
+.sch .bar { fill: var(--barrier); }
+.sch .box { fill: var(--surface); stroke: currentColor; stroke-width: 1.3; }
+.sch .ln { fill: none; stroke: currentColor; stroke-width: 1.3; }
+.sch .lt { fill: none; stroke: var(--barrier); stroke-width: 1.4; }
+.sch .res { fill: var(--surface); stroke: currentColor; stroke-width: 1.2; }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <span class="eyebrow">IM Project Competition · Fall 2026 · chassis wiring</span>
+    <h1>IM Robot Wiring</h1>
+    <p class="lede">The robot as it is now: Pico, 6 optocouplers, L298N, two 12 V encoder motors (swapped sides), two line IR sensors, the right ultrasonic and the drop servo, running from batteries only.</p>
+    <div class="sides">
+      <div class="side pico"><b>Pico side</b>Pico, both encoders, both line IRs, the ultrasonic, the servo. Powered by the AA pack into VSYS. Encoders and IRs run from the Pico's 3.3 V pin.</div>
+      <div class="side bar"><b>6 × PC817</b>The only link between the sides is light inside each optocoupler. The two grounds never touch.</div>
+      <div class="side motor"><b>Motor side</b>12 V battery, L298N, the two motors. The L298N's 5 V output feeds the optocoupler pull-ups.</div>
+    </div>
+  </header>
+
+  <section class="block">
+    <header>
+      <h2>Circuit diagram</h2>
+      <p>What connects to what. The encoders sit on the motors, but electrically they belong to the Pico side.</p>
+    </header>
+    <figure>
+      <div class="diagram">
+        <svg class="sch" viewBox="0 0 1000 672" role="img" aria-label="Circuit diagram: line IRs, ultrasonic, servo and both encoders wire straight to the Pico; the Pico drives the L298N only through six PC817 optocouplers that straddle the isolation line; the L298N drives the two 12 V motors from the battery.">
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+            <marker id="arb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--barrier)"/></marker>
+          </defs>
+          <rect x="0" y="0" width="560" height="672" fill="var(--pico-side)"/>
+          <rect x="560" y="0" width="440" height="672" fill="var(--motor-side)"/>
+          <text class="hd" x="16" y="24">PICO SIDE · 3.3 V LOGIC · AA PACK OR USB</text>
+          <text class="hd" x="984" y="24" text-anchor="end">MOTOR SIDE · 12 V BATTERY</text>
+
+          <!-- sensors -->
+          <rect class="box" x="16" y="56" width="160" height="86" rx="4"/>
+          <text class="t" x="26" y="76">HC-SR04 · right</text>
+          <text x="168" y="100" text-anchor="end">TRIG</text>
+          <text x="168" y="120" text-anchor="end">ECHO</text>
+          <text class="s" x="26" y="134">VCC 5 V rail · GND</text>
+          <path class="ln" d="M300,96 H178" marker-end="url(#ar)"/>
+          <path class="ln" d="M176,116 H196 M228,116 H298" marker-end="url(#ar)"/>
+          <rect class="res" x="196" y="111" width="32" height="10" rx="2"/>
+          <text class="s" x="212" y="136" text-anchor="middle">1 kΩ</text>
+          <circle cx="250" cy="116" r="2.6" fill="currentColor"/>
+          <path class="ln" d="M250,116 V126 M250,150 V158 M241,158 H259 M244,162 H256 M247,166 H253"/>
+          <rect class="res" x="245" y="126" width="10" height="24" rx="2"/>
+          <text class="s" x="262" y="142">2 kΩ</text>
+
+          <rect class="box" x="16" y="196" width="160" height="70" rx="4"/>
+          <text class="t" x="26" y="216">Servo · drop</text>
+          <text x="168" y="240" text-anchor="end">SIGNAL</text>
+          <text class="s" x="26" y="258">+ 5 V rail · − GND</text>
+          <path class="ln" d="M300,236 H178" marker-end="url(#ar)"/>
+
+          <rect class="box" x="16" y="336" width="160" height="58" rx="4"/>
+          <text class="t" x="26" y="356">IR right · line</text>
+          <text x="168" y="376" text-anchor="end">OUT</text>
+          <text class="s" x="26" y="388">VCC 3.3 V · GND</text>
+          <path class="ln" d="M176,372 H298" marker-end="url(#ar)"/>
+
+          <rect class="box" x="16" y="410" width="160" height="58" rx="4"/>
+          <text class="t" x="26" y="430">IR left · line</text>
+          <text x="168" y="450" text-anchor="end">OUT</text>
+          <text class="s" x="26" y="462">VCC 3.3 V · GND</text>
+          <path class="ln" d="M176,446 H298" marker-end="url(#ar)"/>
+
+          <!-- Pico -->
+          <rect class="box" x="300" y="56" width="170" height="424" rx="6"/>
+          <text class="t" x="385" y="78" text-anchor="middle">Raspberry Pi Pico</text>
+          <text x="306" y="100">GP16</text>
+          <text x="306" y="120">GP17</text>
+          <text x="306" y="240">GP2</text>
+          <text x="306" y="376">GP0</text>
+          <text x="306" y="450">GP1</text>
+          <text class="s" x="385" y="186" text-anchor="middle">VSYS ← AA pack (3 × AA)</text>
+          <text class="s" x="385" y="204" text-anchor="middle">VSYS → 5 V sensor rail</text>
+          <text class="s" x="385" y="300" text-anchor="middle">3V3 (pin 36) → encoders, IRs</text>
+          <text x="464" y="114" text-anchor="end">GP10</text>
+          <text x="464" y="169" text-anchor="end">GP11</text>
+          <text x="464" y="224" text-anchor="end">GP12</text>
+          <text x="464" y="279" text-anchor="end">GP13</text>
+          <text x="464" y="334" text-anchor="end">GP14</text>
+          <text x="464" y="389" text-anchor="end">GP15</text>
+          <text x="320" y="473" text-anchor="middle">GP18</text>
+          <text x="350" y="461" text-anchor="middle">GP19</text>
+          <text x="400" y="473" text-anchor="middle">GP4</text>
+          <text x="430" y="461" text-anchor="middle">GP5</text>
+
+          <!-- optocouplers -->
+          <text class="s" x="552" y="86" text-anchor="end">6 × PC817</text>
+          <g id="optos"></g>
+
+          <!-- L298N -->
+          <rect class="box" x="680" y="70" width="150" height="340" rx="4"/>
+          <text class="t" x="755" y="92" text-anchor="middle">L298N</text>
+          <text x="688" y="114">ENA</text>
+          <text x="688" y="169">IN1</text>
+          <text x="688" y="224">IN2</text>
+          <text x="688" y="279">IN3</text>
+          <text x="688" y="334">IN4</text>
+          <text x="688" y="389">ENB</text>
+          <text x="822" y="114" text-anchor="end">+12V</text>
+          <text x="822" y="144" text-anchor="end">GND</text>
+          <text x="822" y="174" text-anchor="end">+5V</text>
+          <text x="822" y="334" text-anchor="end">OUT4</text>
+          <text x="822" y="364" text-anchor="end">OUT3</text>
+          <text x="715" y="402" text-anchor="middle">OUT1</text>
+          <text x="760" y="402" text-anchor="middle">OUT2</text>
+          <text class="s" x="760" y="302" text-anchor="middle">ENA side = RIGHT wheel</text>
+          <text class="s" x="760" y="318" text-anchor="middle">ENB side = LEFT wheel</text>
+          <text class="s" x="760" y="244" text-anchor="middle">ENA, ENB jumpers off</text>
+          <text class="s" x="760" y="260" text-anchor="middle">5V-EN jumper on</text>
+
+          <!-- battery -->
+          <rect class="box" x="880" y="90" width="104" height="66" rx="4"/>
+          <text class="t" x="932" y="122" text-anchor="middle">12 V</text>
+          <text class="s" x="932" y="140" text-anchor="middle">battery</text>
+          <path class="ln" d="M830,110 H848 M862,104 L878,110 M878,110 H880 M830,140 H880"/>
+          <circle cx="850" cy="110" r="2" fill="currentColor"/>
+          <text class="s" x="855" y="98" text-anchor="middle">switch</text>
+          <text x="886" y="114">+</text>
+          <text x="886" y="144">−</text>
+          <path class="ln" d="M830,170 H848"/>
+          <text class="s" x="852" y="174">to opto pull-ups</text>
+
+          <!-- motors -->
+          <rect class="box" x="486" y="500" width="284" height="72" rx="4"/>
+          <text class="t" x="666" y="532" text-anchor="middle">Right motor 12 V</text>
+          <text class="s" x="666" y="550" text-anchor="middle">tabs → OUT1, OUT2</text>
+          <text class="s" x="523" y="514" text-anchor="middle">encoder</text>
+          <text x="494" y="528">C1</text>
+          <text x="494" y="546">C2</text>
+          <text class="s" x="494" y="564">3V3 · GND</text>
+
+          <rect class="box" x="486" y="588" width="284" height="72" rx="4"/>
+          <text class="t" x="666" y="620" text-anchor="middle">Left motor 12 V</text>
+          <text class="s" x="666" y="638" text-anchor="middle">tabs → OUT3, OUT4</text>
+          <text class="s" x="523" y="602" text-anchor="middle">encoder</text>
+          <text x="494" y="616">C1</text>
+          <text x="494" y="634">C2</text>
+          <text class="s" x="494" y="652">3V3 · GND</text>
+
+          <!-- encoder lines into the Pico bottom -->
+          <path class="ln" d="M486,524 H400 V482" marker-end="url(#ar)"/>
+          <path class="ln" d="M486,542 H430 V482" marker-end="url(#ar)"/>
+          <path class="ln" d="M486,612 H320 V482" marker-end="url(#ar)"/>
+          <path class="ln" d="M486,630 H350 V482" marker-end="url(#ar)"/>
+
+          <!-- motor power -->
+          <path class="ln" d="M715,410 V500 M760,410 V500"/>
+          <path class="ln" d="M770,612 H900 V360 H830 M770,630 H930 V330 H830"/>
+
+          <!-- isolation line, drawn last so it reads through the optos and motors -->
+          <line x1="560" y1="34" x2="560" y2="668" stroke="var(--barrier)" stroke-width="2" stroke-dasharray="7 5"/>
+          <text class="bar" x="566" y="46" font-size="10">no wire crosses here</text>
+          <text class="bar" x="566" y="584" font-size="10">no electrical link</text>
+        </svg>
+      </div>
+      <figcaption>Sensors and encoders wire straight to the Pico. The Pico reaches the L298N only through the six optocouplers on the dashed line, so a motor spike cannot reach the Pico. The motors swapped sides: the OUT1/OUT2 motor (ENA, IN1, IN2) is now the right wheel with its encoder on GP4/GP5; the OUT3/OUT4 motor (ENB, IN3, IN4) is the left wheel with its encoder on GP18/GP19. The ultrasonic ECHO goes through a 1 kΩ / 2 kΩ divider because it outputs 5 V and the Pico's pins take 3.3 V.</figcaption>
+    </figure>
+  </section>
+
+  <section class="block">
+    <header>
+      <h2>The two circuits you repeat</h2>
+      <p>One optocoupler channel, built six times, and one encoder cable, wired twice.</p>
+    </header>
+    <div class="pair">
+      <figure>
+        <div class="diagram">
+          <svg class="sch" viewBox="0 0 620 230" role="img" aria-label="One optocoupler channel: GPIO through 330 ohms lights the LED; the phototransistor pulls the L298N input low against a 1 kilohm pull-up to the L298N's 5 volts.">
+            <defs>
+              <marker id="arb2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--barrier)"/></marker>
+              <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+            </defs>
+            <rect x="0" y="0" width="310" height="230" fill="var(--pico-side)"/>
+            <rect x="310" y="0" width="310" height="230" fill="var(--motor-side)"/>
+            <text x="16" y="84">GP10</text>
+            <path class="ln" d="M52,80 H88 M140,80 H260 V94"/>
+            <rect class="res" x="88" y="74" width="52" height="12" rx="2"/>
+            <text class="s" x="114" y="66" text-anchor="middle">330 Ω</text>
+            <!-- LED -->
+            <path d="M248,94 H272 L260,114 Z" fill="currentColor"/>
+            <path class="ln" d="M248,114 H272 M260,114 V160 H150"/>
+            <text x="16" y="164">Pico GND</text>
+            <path class="ln" d="M80,160 H150"/>
+            <!-- light -->
+            <path class="lt" d="M280,98 L334,98" marker-end="url(#arb2)"/>
+            <path class="lt" d="M280,112 L334,112" marker-end="url(#arb2)"/>
+            <!-- phototransistor -->
+            <path class="ln" d="M348,84 V126" stroke-width="2.2"/>
+            <path class="ln" d="M348,95 L376,80 V60 H470 M348,115 L376,130 V160 H476"/>
+            <path d="M376,130 L366,128 L371,121 Z" fill="currentColor"/>
+            <circle cx="470" cy="60" r="2.6" fill="currentColor"/>
+            <path class="ln" d="M470,60 V52 M470,24 V16"/>
+            <rect class="res" x="464" y="24" width="12" height="28" rx="2"/>
+            <text class="s" x="460" y="42" text-anchor="end">1 kΩ</text>
+            <text x="482" y="20">+5 V (L298N)</text>
+            <path class="ln" d="M470,60 H550" marker-end="url(#ar2)"/>
+            <text x="556" y="64">ENA</text>
+            <text x="482" y="164">L298N GND</text>
+            <!-- package -->
+            <rect x="226" y="70" width="170" height="78" rx="4" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="3 3"/>
+            <text class="s" x="300" y="196" text-anchor="end">PC817</text>
+            <text class="s" x="232" y="76" text-anchor="end">1</text>
+            <text class="s" x="252" y="158" text-anchor="end">2</text>
+            <text class="s" x="402" y="76">4</text>
+            <text class="s" x="382" y="158">3</text>
+            <line x1="310" y1="8" x2="310" y2="222" stroke="var(--barrier)" stroke-width="2" stroke-dasharray="7 5"/>
+          </svg>
+        </div>
+        <figcaption>GPIO high lights the LED, the transistor turns on and pulls ENA low. That inversion is why <code>analogWrite(ENA, 255)</code> stops the motor in your code. Pin 1 is the dot on the chip.</figcaption>
+      </figure>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 620 230" role="img" aria-label="Encoder connector: six pins M1, GND, C1, C2, VCC, M2. Only GND, C1, C2 and VCC are used; VCC goes to 3.3 volts.">
+            <rect x="0" y="0" width="620" height="230" fill="#eceee9"/>
+            <g font-family="IBM Plex Mono, monospace" font-size="11" fill="#22272b">
+              <rect x="40" y="34" width="280" height="44" rx="4" fill="#f4efe2" stroke="#b9ae92"/>
+              <rect x="40" y="78" width="280" height="10" fill="#ddd3ba"/>
+              <g id="encPins"></g>
+              <text x="350" y="44" font-family="IBM Plex Sans Condensed, sans-serif" font-size="14" font-weight="600">6-pin encoder plug</text>
+              <text x="350" y="64" fill="#5b636b">Usual JGB37-520 order and</text>
+              <text x="350" y="80" fill="#5b636b">cable colours. Check the</text>
+              <text x="350" y="96" fill="#5b636b">labels printed on your</text>
+              <text x="350" y="112" fill="#5b636b">encoder board first.</text>
+              <text x="350" y="150">C1 = channel A</text>
+              <text x="350" y="168">C2 = channel B</text>
+              <text x="350" y="186">11 pulses per motor turn</text>
+              <text x="350" y="204">on each channel</text>
+            </g>
+          </svg>
+        </div>
+        <figcaption>Use only GND, C1, C2 and VCC. Your motors already get power through the wires soldered to the tabs, so leave the cable's M1 and M2 wires unconnected and tape their ends.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="block">
+    <header>
+      <h2>Breadboard layout</h2>
+      <p>The two boards as they sit on the chassis: optocouplers on the left board next to the L298N, the Pico on the right board. Labels at the edges are wires that leave the board. On a phone, scroll the drawing sideways.</p>
+    </header>
+    <figure>
+      <div class="diagram board">
+        <svg id="bb" viewBox="0 0 860 690" role="img" aria-label="Breadboard layout: left board holds six PC817 optocouplers with their resistors; right board holds the Pico, the two ultrasonic ECHO dividers and the power rails."></svg>
+      </div>
+      <div class="legend" id="legend"></div>
+      <figcaption>Left board: outer left rail is the L298N's +5 V, inner left rail is L298N GND, inner right rail is Pico GND. Right board: left rails carry the sensor 5 V (from the VSYS row) and GND, right rails carry 3.3 V and GND. Row numbers are a guide; any free rows work if each part keeps the same neighbours.</figcaption>
+    </figure>
+  </section>
+
+  <section class="block">
+    <header>
+      <h2>Pico pin map</h2>
+      <p>By physical pin number, pin 1 at the USB end on the left. This is exactly what the final code uses.</p>
+    </header>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Pin</th><th>Name</th><th>Connects to</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td class="m">1</td><td class="m">GP0</td><td>Right line IR OUT</td><td><span class="tag new">used</span></td></tr>
+          <tr><td class="m">2</td><td class="m">GP1</td><td>Left line IR OUT</td><td><span class="tag new">used</span></td></tr>
+          <tr><td class="m">3, 8, 13, 18, 23, 28, 38</td><td class="m">GND</td><td>Pico-side GND rails: AA pack −, opto pin 2, encoders, IRs, ultrasonic, servo</td><td><span class="tag new">used</span></td></tr>
+          <tr><td class="m">4</td><td class="m">GP2</td><td>Servo signal (drop)</td><td><span class="tag new">used</span></td></tr>
+          <tr><td class="m">5</td><td class="m">GP3</td><td>Spare</td><td><span class="tag spare">spare</span></td></tr>
+          <tr><td class="m">6</td><td class="m">GP4</td><td>Right wheel encoder C1 (A)</td><td><span class="tag new">used</span></td></tr>
+          <tr><td class="m">7</td><td class="m">GP5</td><td>Right wheel encoder C2 (B)</td><td><span class="tag new">used</span></td></tr>
+          <tr><td class="m">9–12</td><td class="m">GP6–GP9</td><td>Spare. Gyro later on GP6 (SDA) / GP7 (SCL) with <code>Wire1</code></td><td><span class="tag spare">spare</span></td></tr>
+          <tr><td class="m">14</td><td class="m">GP10</td><td>Opto 1 → L298N ENA (right wheel speed)</td><td><span class="tag new">used</span></td></tr>
+          <tr><td class="m">15</td><td class="m">GP11</td><td>Opto 2 → L298N IN1 (right wheel)</td><td><span class="tag new">used</span></td></tr>
+          <tr><td class="m">16</td><td class="m">GP12</td><td>Opto 3 → L298N IN2 (right wheel)</td><td><span class="tag new">used</span></td></tr>
+          <tr><td class="m">17</td><td class="m">GP13</td><td>Opto 4 → L298N IN3 (left wheel)</td><td><span class="tag new">used</span></td></tr>
+          <tr><td class="m">19</td><td class="m">GP14</td><td>Opto 5 → L298N IN4 (left wheel)</td><td><span class="tag new">used</span></td></tr>
+          <tr><td class="m">20</td><td class="m">GP15</td><td>Opto 6 → L298N ENB (left wheel speed)</td><td><span class="tag new">used</span></td></tr>
+          <tr><td class="m">21</td><td class="m">GP16</td><td>Right HC-SR04 TRIG</td><td><span class="tag new">used</span></td></tr>
+          <tr><td class="m">22</td><td class="m">GP17</td><td>Right HC-SR04 ECHO through 1 kΩ, with 2 kΩ from GP17 to GND</td><td><span class="tag new">used</span></td></tr>
+          <tr><td class="m">24</td><td class="m">GP18</td><td>Left wheel encoder C1 (A)</td><td><span class="tag new">used</span></td></tr>
+          <tr><td class="m">25</td><td class="m">GP19</td><td>Left wheel encoder C2 (B)</td><td><span class="tag new">used</span></td></tr>
+          <tr><td class="m">26, 27, 29</td><td class="m">GP20–GP22</td><td>Spare. Front ultrasonic later: TRIG GP22</td><td><span class="tag spare">spare</span></td></tr>
+          <tr><td class="m">31, 32, 34</td><td class="m">GP26–GP28</td><td>Spare. Front ultrasonic ECHO later on GP28 (with divider)</td><td><span class="tag spare">spare</span></td></tr>
+          <tr><td class="m">36</td><td class="m">3V3 OUT</td><td>Right-board 3.3 V rail: both encoders' VCC, both IRs' VCC</td><td><span class="tag new">used</span></td></tr>
+          <tr><td class="m">39</td><td class="m">VSYS</td><td>AA pack + (3 × AA). Also feeds the 5 V rail for the ultrasonic and servo</td><td><span class="tag new">used</span></td></tr>
+          <tr><td class="m">40</td><td class="m">VBUS</td><td><b>Nothing.</b> It only has power while the USB cable is plugged in</td><td><span class="tag spare">empty</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <header>
+      <h2>Wire list</h2>
+      <p>Every connection once, grouped by job. Tick them off as you go.</p>
+    </header>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>From</th><th>To</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr class="group"><td colspan="3">Power, motor side</td></tr>
+          <tr><td>12 V battery +</td><td>switch → L298N +12V</td><td></td></tr>
+          <tr><td>12 V battery −</td><td>L298N GND</td><td>Not to any Pico GND</td></tr>
+          <tr><td>L298N +5V</td><td>Left board, outer left rail</td><td>Feeds the six 1 kΩ pull-ups</td></tr>
+          <tr><td>L298N GND</td><td>Left board, inner left rail</td><td>Opto pin 3 (emitter) ×6</td></tr>
+          <tr><td>L298N OUT1, OUT2</td><td>RIGHT wheel motor tabs</td><td>Motors swapped sides</td></tr>
+          <tr><td>L298N OUT3, OUT4</td><td>LEFT wheel motor tabs</td><td></td></tr>
+          <tr class="group"><td colspan="3">Power, Pico side (works without USB)</td></tr>
+          <tr><td>AA pack + (3 × AA)</td><td>Pico VSYS (pin 39)</td><td>Never VBUS (pin 40). 4 × AA is too much for VSYS</td></tr>
+          <tr><td>AA pack −</td><td>Pico GND rail</td><td></td></tr>
+          <tr><td>VSYS row</td><td>Right board, outer left rail</td><td>About 4.5 V for the ultrasonic and servo</td></tr>
+          <tr><td>3V3 OUT (pin 36)</td><td>Right board, outer right rail</td><td>3.3 V for both encoders and both IRs</td></tr>
+          <tr><td>Pico GND (pins 3, 38)</td><td>Right board GND rails</td><td></td></tr>
+          <tr><td>Right board GND rail</td><td>Left board, inner right rail</td><td>Opto pin 2 (LED cathode) ×6</td></tr>
+          <tr class="group"><td colspan="3">Motor control, ×6 (unchanged pins)</td></tr>
+          <tr><td>Pico GP10–GP15</td><td>330 Ω → opto pin 1</td><td>GP10 ENA, GP11 IN1, GP12 IN2, GP13 IN3, GP14 IN4, GP15 ENB</td></tr>
+          <tr><td>Opto pin 2</td><td>Pico GND rail</td><td></td></tr>
+          <tr><td>Opto pin 4</td><td>L298N input + 1 kΩ to L298N +5V</td><td>ENA/IN1/IN2 = right wheel, IN3/IN4/ENB = left wheel</td></tr>
+          <tr><td>Opto pin 3</td><td>L298N GND rail</td><td></td></tr>
+          <tr class="group"><td colspan="3">Encoders</td></tr>
+          <tr><td>Left wheel encoder C1 / C2</td><td>GP18 / GP19</td><td>Usually yellow / green</td></tr>
+          <tr><td>Right wheel encoder C1 / C2</td><td>GP4 / GP5</td><td></td></tr>
+          <tr><td>Both encoders VCC</td><td>3.3 V rail (pin 36)</td><td>Usually blue. Never 5 V or VBUS</td></tr>
+          <tr><td>Both encoders GND</td><td>Pico GND rail</td><td>Usually black</td></tr>
+          <tr><td>Encoder M1, M2</td><td>Nothing</td><td>Motors are powered through the soldered tabs</td></tr>
+          <tr class="group"><td colspan="3">Line IR sensors</td></tr>
+          <tr><td>Left IR OUT</td><td>GP1</td><td></td></tr>
+          <tr><td>Right IR OUT</td><td>GP0</td><td></td></tr>
+          <tr><td>Both IR VCC / GND</td><td>3.3 V rail / GND rail</td><td>Not VBUS, or they die on battery</td></tr>
+          <tr class="group"><td colspan="3">Ultrasonic (right side)</td></tr>
+          <tr><td>HC-SR04 TRIG</td><td>GP16</td><td></td></tr>
+          <tr><td>HC-SR04 ECHO</td><td>1 kΩ → GP17, 2 kΩ from GP17 to GND</td><td>5 V → 3.3 V</td></tr>
+          <tr><td>HC-SR04 VCC / GND</td><td>VSYS rail / GND rail</td><td></td></tr>
+          <tr class="group"><td colspan="3">Servo (drop at T1)</td></tr>
+          <tr><td>Servo signal (orange / yellow)</td><td>GP2</td><td>Directly, not through an optocoupler</td></tr>
+          <tr><td>Servo + (red) / − (brown)</td><td>VSYS rail / GND rail</td><td>If the Pico resets when the servo moves, add a 470 µF capacitor across the rail</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <header>
+      <h2>Before you switch on</h2>
+    </header>
+    <ol class="check">
+      <li><span><b>Nothing on VBUS (pin 40).</b> VBUS only has power while the USB cable is in. Encoders or IRs fed from it work on the laptop and go dead on battery, and the speed control then runs the motors flat out. Feed them from 3V3 (pin 36).</span></li>
+      <li><span><b>AA pack + to VSYS (pin 39), − to a Pico GND.</b> Measure VSYS on battery: 3.6–5.5 V is right. 4 cells (about 6 V) is too high.</span></li>
+      <li><span><b>Check the encoder is separate from the motor.</b> With a multimeter on continuity, touch the encoder plug's GND pin and each motor tab. It must not beep. If it beeps, don't connect that encoder: its GND would join the two sides.</span></li>
+      <li><span><b>Encoder VCC on 3.3 V only.</b> The encoder outputs follow its supply, and 5 V on C1/C2 can damage the Pico.</span></li>
+      <li><span><b>ECHO through its divider.</b> 1 kΩ in series, 2 kΩ from GP17 to GND.</span></li>
+      <li><span><b>Pico GND and L298N GND never meet.</b> Check with the meter: no beep between the two left-board GND rails.</span></li>
+      <li><span><b>L298N jumpers:</b> ENA and ENB jumpers removed (the optos drive those pins), 5V-EN jumper left on (it powers the pull-ups).</span></li>
+      <li><span><b>Keep encoder wires away from motor wires.</b> If counts jump while the motors run, twist each encoder's four wires together and add a 100 nF capacitor across each motor's tabs.</span></li>
+    </ol>
+  </section>
+
+  <section class="block">
+    <div class="codehead">
+      <header style="display:grid;gap:6px;max-width:780px">
+        <h2>Battery check sketch</h2>
+        <p style="color:var(--muted)">Upload it, unplug the USB and run on battery. Motors stay off. It shows whether both encoders still work without the laptop.</p>
+      </header>
+      <button class="copy" id="copyBtn" type="button">Copy sketch</button>
+    </div>
+    <ol class="steps">
+      <li>Upload, then unplug the USB and switch on the AA pack.</li>
+      <li>Turn each wheel slowly by hand. The Pico's green LED should flicker for both wheels.</li>
+      <li>Dark for one wheel: that encoder has no power or no ground on battery. Its VCC goes to 3V3 (pin 36), its GND to a Pico GND.</li>
+      <li>Hold each IR over white and black: the LED on the IR module itself must switch.</li>
+    </ol>
+    <pre class="code" id="code"></pre>
+  </section>
+
+  <section class="block">
+    <header>
+      <h2>What the encoders fix</h2>
+    </header>
+    <div class="pair">
+      <p><b>Driving straight.</b> Your 0 / 72 PWM calibration only holds for one battery level and one floor. With counts, the code can speed up or slow down the right motor until both wheels have turned the same amount, so the robot goes straight on its own.</p>
+      <p><b>Turning by angle.</b> The 10° search turn was set by time and kept missing. Spinning on the spot, each wheel travels (wheel spacing × π × angle ÷ 360), so a turn can stop at a count instead of a time. The same counts give the distances for the run to T1.</p>
+    </div>
+  </section>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const NS = "http://www.w3.org/2000/svg";
+  const el = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+  const txt = (parent, x, y, s, attrs = {}) => { const t = el("text", Object.assign({ x, y }, attrs), parent); t.textContent = s; return t; };
+
+  /* ---------- schematic: optocouplers ---------- */
+  const og = document.getElementById("optos");
+  ["ENA", "IN1", "IN2", "IN3", "IN4", "ENB"].forEach((s, k) => {
+    const y = 110 + 55 * k;
+    el("path", { class: "ln", d: `M470,${y} H516 M604,${y} H678`, "marker-end": "url(#ar)" }, og);
+    el("rect", { class: "box", x: 516, y: y - 15, width: 88, height: 30, rx: 3 }, og);
+    el("path", { d: `M524,${y - 7} h14 l-7,12 z`, fill: "currentColor" }, og);
+    el("path", { class: "lt", d: `M542,${y - 3} H574`, "marker-end": "url(#arb)" }, og);
+    el("path", { class: "ln", d: `M584,${y - 9} V${y + 9} M584,${y - 4} L596,${y - 11} M584,${y + 4} L596,${y + 11}` }, og);
+  });
+
+  /* ---------- encoder plug pins ---------- */
+  const ep = document.getElementById("encPins");
+  const pins = [
+    { n: "M1", c: "#d32f2f", to: ["not", "used"] },
+    { n: "GND", c: "#222222", to: ["Pico", "GND"] },
+    { n: "C1", c: "#e0b000", to: ["GP18 L", "GP4 R"] },
+    { n: "C2", c: "#2e9e4a", to: ["GP19 L", "GP5 R"] },
+    { n: "VCC", c: "#1e63c6", to: ["3.3 V", "rail"] },
+    { n: "M2", c: "#ffffff", to: ["not", "used"] }
+  ];
+  pins.forEach((p, i) => {
+    const x = 63 + i * 47;
+    el("rect", { x: x - 6, y: 48, width: 12, height: 22, fill: "#c9b98f", stroke: "#a8976b" }, ep);
+    txt(ep, x, 28, p.n, { "text-anchor": "middle", "font-weight": "600" });
+    if (p.c === "#ffffff") el("path", { d: `M${x},88 V140`, stroke: "#9aa0a6", "stroke-width": 6, "stroke-linecap": "round" }, ep);
+    el("path", { d: `M${x},88 V140`, stroke: p.c, "stroke-width": 4, "stroke-linecap": "round", opacity: (p.n === "M1" || p.n === "M2") ? 0.45 : 1 }, ep);
+    txt(ep, x, 160, p.to[0], { "text-anchor": "middle", "font-size": 10.5, fill: (p.n === "M1" || p.n === "M2") ? "#7a8087" : "#22272b" });
+    txt(ep, x, 174, p.to[1], { "text-anchor": "middle", "font-size": 10.5, fill: (p.n === "M1" || p.n === "M2") ? "#7a8087" : "#22272b" });
+  });
+
+  /* ---------- breadboard ---------- */
+  const svg = document.getElementById("bb");
+  const P = 12, ROWS = 48;
+  const B = { 1: { x: 126, y: 34 }, 2: { x: 452, y: 34 } };
+  const COL = { a: 4, b: 5, c: 6, d: 7, e: 8, f: 11, g: 12, h: 13, i: 14, j: 15 };
+  const W = {
+    p5: "#d32f2f", p33: "#ef8a17", gnd: "#26282b", m5: "#c2185b", mgnd: "#8a5a35",
+    ctrl: "#1e63c6", out: "#7c3aed", enc: "#1f8a4c", us: "#b98c00", ir: "#0e9fb8", servo: "#e0620d"
+  };
+  const legendItems = [
+    ["p5", "Sensor 5 V (VSYS)"], ["p33", "3.3 V"], ["gnd", "Pico GND"], ["ctrl", "GP10–GP15 to optos"],
+    ["m5", "L298N +5 V"], ["mgnd", "L298N GND"], ["out", "Opto out to L298N"], ["enc", "Encoders"], ["us", "Ultrasonic"], ["ir", "Line IR"], ["servo", "Servo"]
+  ];
+  const lg = document.getElementById("legend");
+  legendItems.forEach(([k, name]) => { const s = document.createElement("span"); s.innerHTML = `<i style="background:${W[k]}"></i>${name}`; lg.appendChild(s); });
+
+  const X = (b, c) => B[b].x + (typeof c === "string" ? COL[c] : c) * P;
+  const Y = (b, r) => B[b].y + (r + 1) * P;
+  const H = (b, c, r) => [X(b, c), Y(b, r)];
+
+  el("rect", { x: 0, y: 0, width: 860, height: 690, fill: "#e9ebe6" }, svg);
+  const gBoards = el("g", {}, svg), gParts = el("g", {}, svg), gWires = el("g", {}, svg), gLabels = el("g", {}, svg);
+  const FONT = "IBM Plex Mono, monospace";
+
+  function board(b, title, railNames) {
+    const x0 = B[b].x, y0 = B[b].y, w = 19 * P, h = (ROWS + 2) * P;
+    el("rect", { x: x0, y: y0, width: w, height: h, rx: 6, fill: "#fafaf6", stroke: "#c9cbc2" }, gBoards);
+    el("rect", { x: x0 + 8.7 * P, y: y0 + 0.5 * P, width: 1.6 * P, height: h - P, fill: "#e8e9e2", rx: 2 }, gBoards);
+    // rail stripes
+    [[0.4, "#d84a3f"], [2.6, "#3f6fd8"], [16.4, "#3f6fd8"], [18.6, "#d84a3f"]].forEach(([u, c]) => el("line", { x1: x0 + u * P, y1: y0 + P, x2: x0 + u * P, y2: y0 + h - P, stroke: c, "stroke-width": 1.2, opacity: 0.7 }, gBoards));
+    for (let r = 1; r <= ROWS; r++) {
+      [1, 2, 4, 5, 6, 7, 8, 11, 12, 13, 14, 15, 17, 18].forEach(u => el("rect", { x: x0 + u * P - 1.8, y: Y(b, r) - 1.8, width: 3.6, height: 3.6, fill: "#a3a69e" }, gBoards));
+      if (r === 1 || r % 5 === 0) {
+        txt(gBoards, x0 + 3.05 * P, Y(b, r) + 2.2, r, { "font-size": 6, fill: "#9a9d95", "text-anchor": "middle", "font-family": FONT });
+        txt(gBoards, x0 + 15.95 * P, Y(b, r) + 2.2, r, { "font-size": 6, fill: "#9a9d95", "text-anchor": "middle", "font-family": FONT });
+      }
+    }
+    Object.entries(COL).forEach(([k, u]) => txt(gBoards, x0 + u * P, y0 + 0.75 * P, k, { "font-size": 6.5, fill: "#9a9d95", "text-anchor": "middle", "font-family": FONT }));
+    txt(gLabels, x0 + w / 2, y0 - 12, title, { "font-size": 12, fill: "#22272b", "text-anchor": "middle", "font-family": "IBM Plex Sans Condensed, sans-serif", "font-weight": 600 });
+    railNames.forEach(([u, s, c]) => txt(gLabels, x0 + u * P, y0 + h + 11, s, { "font-size": 7.5, fill: c, "text-anchor": "middle", "font-family": FONT, "font-weight": 500 }));
+  }
+  board(1, "Left board · optocouplers", [[1, "+5V M", W.m5], [2, "GND M", W.mgnd], [17, "GND P", W.gnd], [18, "—", "#9a9d95"]]);
+  board(2, "Right board · Pico", [[1, "+5V", W.p5], [2, "GND", W.gnd], [17, "GND", W.gnd], [18, "3V3", W.p33]]);
+
+  function dot(p, c) { el("circle", { cx: p[0], cy: p[1], r: 2.1, fill: c }, gWires); }
+  function wire(p1, p2, c, d) {
+    const path = d || `M${p1[0]},${p1[1]} L${p2[0]},${p2[1]}`;
+    el("path", { d: path, fill: "none", stroke: "#fafaf6", "stroke-width": 4.6, "stroke-linecap": "round", opacity: 0.9 }, gWires);
+    el("path", { d: path, fill: "none", stroke: c, "stroke-width": 2.5, "stroke-linecap": "round" }, gWires);
+    dot(p1, c); dot(p2, c);
+  }
+  function curve(p1, p2, c, c1, c2) { wire(p1, p2, c, `M${p1[0]},${p1[1]} C${c1[0]},${c1[1]} ${c2[0]},${c2[1]} ${p2[0]},${p2[1]}`); }
+  function resistor(p1, p2, label, lx, ly, anchor = "middle") {
+    el("line", { x1: p1[0], y1: p1[1], x2: p2[0], y2: p2[1], stroke: "#8b8f88", "stroke-width": 1.3 }, gParts);
+    const mx = (p1[0] + p2[0]) / 2, my = (p1[1] + p2[1]) / 2, ang = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]) * 180 / Math.PI;
+    const len = Math.min(22, Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) * 0.62);
+    el("rect", { x: mx - len / 2, y: my - 3, width: len, height: 6, rx: 2.5, fill: "#e8d6aa", stroke: "#b49a5f", "stroke-width": 0.8, transform: `rotate(${ang} ${mx} ${my})` }, gParts);
+    [p1, p2].forEach(p => el("circle", { cx: p[0], cy: p[1], r: 1.6, fill: "#8b8f88" }, gParts));
+    if (label) txt(gLabels, lx, ly, label, { "font-size": 7, fill: "#4a4f55", "text-anchor": anchor, "font-family": FONT });
+  }
+  function stub(b, c, r, side, label, color) {
+    const p = H(b, c, r);
+    const edge = side === "R" ? B[b].x + 19 * P + 12 : B[b].x - 12;
+    wire(p, [edge, p[1]], color);
+    txt(gLabels, side === "R" ? edge + 5 : edge - 5, p[1] + 2.6, label, { "font-size": 7.6, fill: "#22272b", "text-anchor": side === "R" ? "start" : "end", "font-family": FONT });
+  }
+
+  /* left board: six optocoupler channels */
+  const SIG = ["ENA", "IN1", "IN2", "IN3", "IN4", "ENB"], PICO_ROW = [14, 15, 16, 17, 19, 20];
+  stub(1, 1, 1, "L", "L298N +5V", W.m5);
+  stub(1, 2, 2, "L", "L298N GND", W.mgnd);
+  SIG.forEach((s, k) => {
+    const r0 = 3 + 6 * k;
+    // chip
+    el("rect", { x: X(1, 7.55), y: Y(1, r0 + 2) - 0.55 * P, width: 3.9 * P, height: 2.1 * P, rx: 1.5, fill: "#222324" }, gParts);
+    el("circle", { cx: X(1, 10.6), cy: Y(1, r0 + 3) + 1, r: 1.3, fill: "#d8d8d2" }, gParts);
+    txt(gParts, X(1, 9.5), Y(1, r0 + 2) + 6.4, "PC817", { "font-size": 5.2, fill: "#d8d8d2", "text-anchor": "middle", "font-family": FONT });
+    [["e", r0 + 2], ["e", r0 + 3], ["f", r0 + 2], ["f", r0 + 3]].forEach(([c, r]) => el("rect", { x: X(1, c) - 2, y: Y(1, r) - 2, width: 4, height: 4, fill: "#b8b8b0" }, gParts));
+    txt(gLabels, X(1, 9.5), Y(1, r0 + 1) + 2.5, `${s} · GP${10 + k}`, { "font-size": 7, fill: "#22272b", "text-anchor": "middle", "font-family": FONT, "font-weight": 600 });
+    // Pico side: GPIO in, 330 ohm to pin 1, pin 2 to Pico GND
+    resistor(H(1, "g", r0), H(1, "g", r0 + 3), k === 0 ? "330" : "", X(1, 12.9), Y(1, r0 + 1.6), "start");
+    wire(H(1, "j", r0 + 2), H(1, 17, r0 + 2), W.gnd);
+    // motor side: pin 3 to L298N GND, pin 4 pull-up and out
+    wire(H(1, "a", r0 + 2), H(1, 2, r0 + 2), W.mgnd);
+    resistor(H(1, "b", r0 + 3), H(1, 1, r0 + 3), k === 0 ? "1k" : "", X(1, 3), Y(1, r0 + 3) + 10);
+    const o = H(1, "c", r0 + 3), edge = B[1].x - 12, ty = Y(1, r0 + 1);
+    wire(o, [edge, ty], W.out, `M${o[0]},${o[1]} C${o[0] - 4},${ty} ${edge + 30},${ty} ${edge},${ty}`);
+    txt(gLabels, edge - 5, ty + 2.6, `to L298N ${s}`, { "font-size": 7.6, fill: "#22272b", "text-anchor": "end", "font-family": FONT });
+    // control wire from the Pico (right board, column a)
+    const p1 = H(2, "a", PICO_ROW[k]), p2 = H(1, "i", r0);
+    curve(p1, p2, W.ctrl, [p1[0] - 70, p1[1]], [p2[0] + 80, p2[1]]);
+  });
+  // Pico GND to the left board's opto-LED rail
+  { const p1 = H(2, 2, 10), p2 = H(1, 17, 10); curve(p1, p2, W.gnd, [p1[0] - 30, p1[1]], [p2[0] + 30, p2[1]]); }
+
+  /* right board: Pico */
+  const L_NAMES = ["GP0", "GP1", "GND", "GP2", "GP3", "GP4", "GP5", "GND", "GP6", "GP7", "GP8", "GP9", "GND", "GP10", "GP11", "GP12", "GP13", "GND", "GP14", "GP15"];
+  const R_NAMES = ["VBUS", "VSYS", "GND", "3V3_EN", "3V3", "VREF", "GP28", "AGND", "GP27", "GP26", "RUN", "GP22", "GND", "GP21", "GP20", "GP19", "GP18", "GND", "GP17", "GP16"];
+  const USED = new Set(["GND", "GP0", "GP1", "GP2", "GP4", "GP5", "GP10", "GP11", "GP12", "GP13", "GP14", "GP15", "VSYS", "3V3", "GP19", "GP18", "GP17", "GP16"]);
+  el("rect", { x: X(2, 5.35), y: Y(2, 0.45), width: 8.3 * P, height: 20.1 * P, rx: 3, fill: "#1d7a3a" }, gParts);
+  el("rect", { x: X(2, 8.7), y: Y(2, 0.1) - 4, width: 1.6 * P, height: 10, rx: 1.5, fill: "#b9bec4" }, gParts);
+  txt(gParts, X(2, 9.5), Y(2, 10.5), "Raspberry Pi Pico", { "font-size": 8, fill: "#dff0e3", "text-anchor": "middle", "font-family": "IBM Plex Sans Condensed, sans-serif", "font-weight": 600, transform: `rotate(-90 ${X(2, 9.5)} ${Y(2, 10.5)})` });
+  for (let r = 1; r <= 20; r++) {
+    ["c", "h"].forEach(c => el("rect", { x: X(2, c) - 2.2, y: Y(2, r) - 2.2, width: 4.4, height: 4.4, fill: "#d6b350" }, gParts));
+    const ln = L_NAMES[r - 1], rn = R_NAMES[r - 1];
+    txt(gParts, X(2, 6.45), Y(2, r) + 2, ln, { "font-size": 5.6, fill: USED.has(ln) ? "#ffffff" : "#9fcaa9", "font-family": FONT, "font-weight": USED.has(ln) ? 600 : 400 });
+    txt(gParts, X(2, 12.55), Y(2, r) + 2, rn, { "font-size": 5.6, fill: USED.has(rn) ? "#ffffff" : "#9fcaa9", "text-anchor": "end", "font-family": FONT, "font-weight": USED.has(rn) ? 600 : 400 });
+  }
+  // power and ground on the right board
+  wire(H(2, "b", 3), H(2, 2, 3), W.gnd);
+  wire(H(2, "j", 3), H(2, 17, 3), W.gnd);
+  wire(H(2, "i", 5), H(2, 18, 5), W.p33);
+  { const p1 = H(2, "i", 2), p2 = H(2, 1, 2); curve(p1, p2, W.p5, [p1[0], B[2].y - 10], [p2[0], B[2].y - 10]); }
+  stub(2, "j", 2, "R", "AA pack + → VSYS", W.p5);
+  stub(2, 17, 1, "R", "AA pack −", W.gnd);
+  // line IR sensors: OUT to GP0 / GP1 (left side of the Pico), power from the 3.3 V rail
+  stub(2, "a", 1, "L", "Right IR OUT (GP0)", W.ir);
+  stub(2, "a", 2, "L", "Left IR OUT (GP1)", W.ir);
+  stub(2, 18, 28, "R", "Right IR VCC 3.3 V", W.p33);
+  stub(2, 17, 29, "R", "Right IR GND", W.gnd);
+  stub(2, 18, 31, "R", "Left IR VCC 3.3 V", W.p33);
+  stub(2, 17, 32, "R", "Left IR GND", W.gnd);
+  // servo signal
+  stub(2, "a", 4, "L", "Servo signal (GP2)", W.servo);
+  // encoders: left wheel on GP18/GP19 (right side), right wheel on GP4/GP5 (left side)
+  stub(2, "a", 6, "L", "R-enc C1 (A) GP4", W.enc);
+  stub(2, "a", 7, "L", "R-enc C2 (B) GP5", W.enc);
+  stub(2, "j", 16, "R", "L-enc C2 (B) GP19", W.enc);
+  stub(2, "j", 17, "R", "L-enc C1 (A) GP18", W.enc);
+  stub(2, 18, 22, "R", "L-enc VCC 3.3 V", W.p33);
+  stub(2, 17, 23, "R", "L-enc GND", W.gnd);
+  stub(2, 18, 25, "R", "R-enc VCC 3.3 V", W.p33);
+  stub(2, 17, 26, "R", "R-enc GND", W.gnd);
+  // ultrasonic: TRIG straight to the pins
+  stub(2, "j", 20, "R", "Right US TRIG (GP16)", W.us);
+  // right ECHO divider, rows 42-48 -> GP17
+  stub(2, "j", 42, "R", "Right US ECHO (via 1k/2k)", W.us);
+  resistor(H(2, "h", 42), H(2, "h", 45), "1k", X(2, 12.9), Y(2, 43.8), "end");
+  resistor(H(2, "g", 45), H(2, "g", 48), "2k", X(2, 11.8), Y(2, 46.8), "end");
+  { const p1 = H(2, "i", 45), p2 = H(2, "i", 19); curve(p1, p2, W.us, [p1[0] - 22, p1[1] - 90], [p2[0] - 26, p2[1] + 110]); }
+  wire(H(2, "i", 48), H(2, 17, 48), W.gnd);
+  // servo and ultrasonic power from the left (5 V = VSYS) rails
+  stub(2, 1, 37, "L", "Servo + (5 V)", W.p5);
+  stub(2, 2, 38, "L", "Servo − (GND)", W.gnd);
+  stub(2, 1, 41, "L", "Right US VCC 5 V", W.p5);
+  stub(2, 2, 42, "L", "Right US GND", W.gnd);
+
+  /* ---------- sketch + copy ---------- */
+  const code = document.getElementById("code");
+  code.textContent = document.getElementById("sketch-src").textContent.replace(/^\n/, "");
+  const btn = document.getElementById("copyBtn");
+  btn.addEventListener("click", () => {
+    const done = ok => { btn.textContent = ok ? "Copied" : "Selected, press Ctrl+C"; setTimeout(() => (btn.textContent = "Copy sketch"), 2200); };
+    const select = () => { const r = document.createRange(); r.selectNodeContents(code); const s = getSelection(); s.removeAllRanges(); s.addRange(r); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(code.textContent).then(() => done(true), () => { select(); done(false); });
+    else { select(); done(false); }
+  });
+});
+</script>
+
+<script type="text/plain" id="sketch-src">
+/*
+  BATTERY CHECK - run this on BATTERY power only (no USB cable)
+
+  Motors stay OFF. Turn each wheel slowly by hand:
+    - The Pico's small green LED flickers while that wheel turns
+      -> that encoder works on battery.
+    - LED stays dark -> that encoder gets no power or no ground on
+      battery (see the notes in the chat).
+
+  Also hold each IR sensor over white and black: the small LED on
+  the IR module itself must switch. If it stays dark, the IR module
+  has no power on battery.
+
+  Encoders: left GP18/GP19, right GP4/GP5
+*/
+
+#define ENA 10
+#define IN1 11
+#define IN2 12
+#define IN3 13
+#define IN4 14
+#define ENB 15
+
+#define ENC_L_A 18
+#define ENC_R_A 4
+
+volatile long ticks = 0;
+
+void onTick() {
+  ticks++;
+}
+
+void setup() {
+  pinMode(ENA, OUTPUT); pinMode(ENB, OUTPUT);
+  pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT);
+  analogWriteRange(255);
+  analogWrite(ENA, 255);   // inverted: 255 = motors off
+  analogWrite(ENB, 255);
+
+  pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(ENC_L_A, INPUT_PULLUP);
+  pinMode(ENC_R_A, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(ENC_L_A), onTick, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENC_R_A), onTick, CHANGE);
+}
+
+void loop() {
+  // each encoder pulse flips the LED, so a turning wheel makes it flicker
+  digitalWrite(LED_BUILTIN, (ticks / 4) % 2);
+}
+</script>

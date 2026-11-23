@@ -1,6 +1,6 @@
 # Approach 1: find the position from the start walls
 
-Sketch: `approach1_walls.ino` (open this folder in the Arduino IDE).
+Sketch: `../code/approach1_walls/approach1_walls.ino` (open that folder in the Arduino IDE).
 
 ## The idea
 

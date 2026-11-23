@@ -1,6 +1,6 @@
 # Approach 2: find T1 with the black loop
 
-Sketch: `approach2_loop.ino` (open this folder in the Arduino IDE).
+Sketch: `../code/approach2_loop/approach2_loop.ino` (open that folder in the Arduino IDE).
 
 ## The idea
 

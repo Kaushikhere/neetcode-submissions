@@ -1,6 +1,6 @@
 # Approach 3: safe driving with the team's wall rules
 
-Sketch: `approach3_safe.ino` (about 440 lines, less than half of approach 1).
+Sketch: `../code/approach3_safe/approach3_safe.ino` (about 440 lines, less than half of approach 1).
 
 ## The team's idea, and what changed
 

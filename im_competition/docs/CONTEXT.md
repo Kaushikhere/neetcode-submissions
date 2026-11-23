@@ -31,7 +31,7 @@ I'm building a robot for the IM Project Competition (Fall 2026). Please use this
 - Power: 12 V battery -> L298N only. Works on laptop USB; on a 3.3 V battery it misbehaves (encoders/ultrasonic likely need 5 V) - plan: USB power bank or 5 V regulator into VBUS.
 - Old note: Pico from 3 x AA into VSYS (pin 39). Encoders and IRs on 3V3 (pin 36), NOT VBUS (VBUS is dead without USB - that caused "works on USB, not on battery"). Pico GND and L298N GND never joined.
 
-## Final line follower (working) - im_competition/final/line_follower_FINAL.ino
+## Final line follower (working) - im_competition/code/line_follower_FINAL/line_follower_FINAL.ino
 - Each wheel has a speed target in encoder counts per 50 ms; a PI controller every 25 ms sets ENA/ENB and BRAKES a wheel that is too fast (fixes one motor coasting).
 - Settings on the PWM scale (0 = full, 255 = stop), converted by pwmToRate():
   - Straight: left 20, right 110 (MAX_RATE 70)
@@ -41,10 +41,10 @@ I'm building a robot for the IM Project Competition (Fall 2026). Please use this
 
 ## Other code in the repo
 - Repo: kaushikhere/neetcode-submissions, branch claude/wall-following-ultrasonic-robot-x8l7lw, folder im_competition/
-- approach1_walls/approach1_walls.ino (+ APPROACH_1.md): APPROACH 1 full run (RUN_MODE 1-3 calibration, 4 position test, 5 to-T1 test, 0 full run). Finds start position by spinning with the right ultrasonic against the 3 start walls, refines on the back wall and nearer side wall, drives to T1 by encoder odometry with a loop-edge correction, drops, follows the line, resets pose at the line end, goes to T2. Not yet tested on the robot; COUNTS_PER_CM and WHEEL_BASE_CM must be calibrated.
-- approach2_loop/approach2_loop.ino (+ APPROACH_2.md): APPROACH 2 - rough wall sweep only, then two chords across the black loop round T1; the 4 line points are fitted to the loop shape from the map (shift only) to place the robot; servo drop at T1; rest same as approach 1. Needs the loop to exist on the competition board.
-- approach3_safe/approach3_safe.ino (+ APPROACH_3.md): APPROACH 3 - shorter (~440 lines) run with the team's wall rules as a safety layer (front<12 -> back up to 27 cm and turn away; right<27 -> steer away then back to planned heading; stalled wheels -> back up; black ignored as line when a wall is <15 cm ahead or at board edge). Mission: open side -> square to right wall (x, heading) -> up to the loop edge (y) -> T1 drop -> back below the loop edge, drive up, on black turn CLOCKWISE 90 onto the line -> follow -> T2.
-- battery_check/battery_check.ino, encoder_test/, ir_test/, field_map.h.
+- code/approach1_walls/approach1_walls.ino (+ docs/APPROACH_1.md): APPROACH 1 full run (RUN_MODE 1-3 calibration, 4 position test, 5 to-T1 test, 0 full run). Finds start position by spinning with the right ultrasonic against the 3 start walls, refines on the back wall and nearer side wall, drives to T1 by encoder odometry with a loop-edge correction, drops, follows the line, resets pose at the line end, goes to T2. Not yet tested on the robot; COUNTS_PER_CM and WHEEL_BASE_CM must be calibrated.
+- code/approach2_loop/approach2_loop.ino (+ docs/APPROACH_2.md): APPROACH 2 - rough wall sweep only, then two chords across the black loop round T1; the 4 line points are fitted to the loop shape from the map (shift only) to place the robot; servo drop at T1; rest same as approach 1. Needs the loop to exist on the competition board.
+- code/approach3_safe/approach3_safe.ino (+ docs/APPROACH_3.md): APPROACH 3 - shorter (~440 lines) run with the team's wall rules as a safety layer (front<12 -> back up to 27 cm and turn away; right<27 -> steer away then back to planned heading; stalled wheels -> back up; black ignored as line when a wall is <15 cm ahead or at board edge). Mission: open side -> square to right wall (x, heading) -> up to the loop edge (y) -> T1 drop -> back below the loop edge, drive up, on black turn CLOCKWISE 90 onto the line -> follow -> T2.
+- code/tests/ (battery_check, encoder_test, ir_test), maps/field_map.h. Everything (code, docs, photos, maps, wiring) is in im_competition/ - see README.md there.
 
 ## Lessons / rules for code
 - Arduino IDE auto-generates function prototypes before the first function: define every struct/enum BEFORE any function, or it fails with "'Wheel' was not declared".

@@ -1,0 +1,712 @@
+<title>IM Practice Field Map</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: the board drawn to scale on the left (it is the page's subject), an
+   operating panel beside it, then the run plan and strategy notes below. */
+:root {
+  --bg: #eff1ee;
+  --surface: #ffffff;
+  --fg: #1c2024;
+  --muted: #5a626a;
+  --rule: #d6dad3;
+  --accent: #b37800;        /* yellow-marker amber, for start poses and focus */
+  --accent-soft: #f6e7c4;
+  --route: #2459d6;         /* planned moves */
+  --t1: #4f9a12;            /* the green ring on the board */
+  --t2: #b0306a;            /* estimated T2 */
+  --board: #fbfbf7;
+  --board-band: #17191b;
+  --tape: #121314;
+  --wall: #8a95a1;
+  --wall-tall: #59646f;
+  --grid: #e7e9e2;
+  --grid-major: #cdd2c7;
+  --map-text: #2a2f34;
+  --phase-1: #2459d6; --phase-2: #4f9a12; --phase-3: #b37800; --phase-4: #0f8a8a; --phase-5: #6b4fc8; --phase-6: #b0306a; --phase-m: #c5cbc2; --phase-text: #ffffff;
+  --font-head: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171a; --surface: #1c2024; --fg: #e5e8ea; --muted: #9aa3ab; --rule: #2d3338;
+    --accent: #f0b429; --accent-soft: #3a2f14; --route: #2459d6; --t1: #4f9a12; --t2: #b0306a;
+    --board: #d9dcd4; --board-band: #0b0c0d; --tape: #101112; --wall: #74808c; --wall-tall: #4d5762;
+    --grid: #c9cdc3; --grid-major: #b2b8ab; --map-text: #22272b;
+    --phase-1: #5b86f0; --phase-2: #78c03c; --phase-3: #f0b429; --phase-4: #33b5b5; --phase-5: #9a82ec; --phase-6: #e0659c; --phase-m: #3a4147; --phase-text: #14171a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14171a; --surface: #1c2024; --fg: #e5e8ea; --muted: #9aa3ab; --rule: #2d3338;
+  --accent: #f0b429; --accent-soft: #3a2f14; --route: #2459d6; --t1: #4f9a12; --t2: #b0306a;
+  --board: #d9dcd4; --board-band: #0b0c0d; --tape: #101112; --wall: #74808c; --wall-tall: #4d5762;
+  --grid: #c9cdc3; --grid-major: #b2b8ab; --map-text: #22272b;
+  --phase-1: #5b86f0; --phase-2: #78c03c; --phase-3: #f0b429; --phase-4: #33b5b5; --phase-5: #9a82ec; --phase-6: #e0659c; --phase-m: #3a4147; --phase-text: #14171a;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 28px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 40px; }
+
+h1, h2, h3 { font-family: var(--font-head); text-wrap: balance; margin: 0; line-height: 1.15; }
+h1 { font-size: clamp(28px, 4vw, 40px); font-weight: 600; letter-spacing: -0.01em; }
+h2 { font-size: 24px; font-weight: 600; }
+h3 { font-size: 17px; font-weight: 600; }
+p { margin: 0; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.mono, code, .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+code { font-size: 0.92em; background: var(--accent-soft); padding: 0 4px; border-radius: 3px; }
+
+header.top { display: grid; gap: 12px; max-width: 760px; }
+header.top .lede { color: var(--muted); font-size: 16px; }
+.frame-note { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; color: var(--muted); }
+.frame-note span { display: inline-flex; gap: 6px; align-items: baseline; }
+.frame-note b { color: var(--fg); font-weight: 500; }
+
+/* map + panel */
+.layout { display: grid; grid-template-columns: minmax(0, 480px) minmax(0, 1fr); gap: 32px; align-items: start; }
+@media (max-width: 860px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+.mapbox { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 12px; }
+.mapbox svg { display: block; width: 100%; height: auto; touch-action: manipulation; }
+.map-caption { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); padding: 8px 4px 0; }
+
+.panel { display: grid; gap: 22px; min-width: 0; }
+.readout { display: flex; gap: 18px; align-items: baseline; flex-wrap: wrap; padding: 12px 14px; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; }
+.readout .big { font-family: var(--font-mono); font-size: 22px; font-variant-numeric: tabular-nums; }
+.readout .lbl { font-size: 12px; color: var(--muted); }
+
+.group { display: grid; gap: 10px; }
+.pose-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.pose-buttons button { font: 500 14px/1 var(--font-mono); width: 40px; height: 36px; border-radius: 5px; border: 1px solid var(--rule); background: var(--surface); color: var(--fg); cursor: pointer; }
+.pose-buttons button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #17191b; }
+.pose-buttons button:focus-visible, .layers input:focus-visible + span, .copy:focus-visible { outline: 2px solid var(--route); outline-offset: 2px; }
+.pose-info { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+.pose-info div { background: var(--surface); padding: 10px 12px; display: grid; gap: 2px; min-width: 0; }
+.pose-info .k { font-size: 12px; color: var(--muted); }
+.pose-info .v { font-family: var(--font-mono); font-size: 16px; font-variant-numeric: tabular-nums; }
+@media (max-width: 480px) { .pose-info { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.hint { font-size: 13px; color: var(--muted); }
+
+.layers { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.layers label { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; cursor: pointer; }
+.layers input { accent-color: var(--accent); width: 16px; height: 16px; }
+
+.notes { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.notes li { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; font-size: 14px; }
+.badge { width: 22px; height: 22px; border-radius: 50%; background: var(--fg); color: var(--bg); font: 600 12px/22px var(--font-mono); text-align: center; }
+.notes li b { font-weight: 600; }
+.notes .co { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+
+/* tables */
+.tablewrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 500; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.n { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+th.n { text-align: right; }
+
+section.block { display: grid; gap: 16px; }
+section.block > header { display: grid; gap: 6px; max-width: 760px; }
+section.block > header p { color: var(--muted); }
+
+/* run timeline, drawn to scale: 90 s = full width */
+.timeline { display: grid; gap: 10px; }
+.bar { display: flex; height: 40px; border-radius: 5px; overflow: hidden; border: 1px solid var(--rule); }
+.bar div { display: flex; align-items: center; justify-content: center; color: var(--phase-text); font: 600 13px/1 var(--font-mono); min-width: 0; }
+.bar .m { color: var(--muted); }
+.ticks { position: relative; height: 16px; font: 11px/1 var(--font-mono); color: var(--muted); }
+.ticks span { position: absolute; transform: translateX(-50%); }
+.ticks span:first-child { transform: none; }
+.ticks span:last-child { transform: translateX(-100%); }
+.phases { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 24px; }
+.phases li { display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: 10px; font-size: 14px; }
+.phases .sw { width: 12px; height: 12px; border-radius: 2px; margin-top: 5px; }
+.phases b { font-weight: 600; }
+.phases .t { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+
+/* strategy notes */
+.advice { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 28px 36px; }
+.advice article { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.advice ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+.advice li::marker { color: var(--accent); }
+.advice p { max-width: 65ch; }
+
+.callout { border-left: 3px solid var(--t2); background: var(--surface); padding: 12px 16px; border-radius: 0 6px 6px 0; display: grid; gap: 6px; max-width: 860px; }
+.callout ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+
+.codehead { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.copy { font: 500 13px/1 var(--font-body); padding: 9px 14px; border-radius: 5px; border: 1px solid var(--rule); background: var(--surface); color: var(--fg); cursor: pointer; }
+pre.code { margin: 0; overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; font: 12.5px/1.55 var(--font-mono); max-height: 460px; }
+
+/* svg classes */
+.lbl-map { font-family: var(--font-mono); fill: var(--map-text); }
+.feature { cursor: pointer; }
+@media (prefers-reduced-motion: no-preference) { .pose-mark { transition: opacity .15s; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <span class="eyebrow">IM Project Competition · Fall 2026 · Competition I</span>
+    <h1>IM Practice Field Map</h1>
+    <p class="lede">The 4′ × 8′ practice board measured from your photo and laid on a centimetre grid, with the start poses, both targets, the line and every wall. Below it: a 90-second run plan and what to build next.</p>
+    <div class="frame-note">
+      <span>Origin <b>start-end left corner</b></span>
+      <span><b>x</b> to the right, 0–122 cm</span>
+      <span><b>y</b> up the field, 0–244 cm</span>
+      <span>Heading <b>0° = facing right</b>, 90° = up-field, left turn = +</span>
+    </div>
+  </header>
+
+  <div class="layout">
+    <div class="mapbox">
+      <svg id="map" viewBox="-13 -12 148 270" role="img" aria-label="Scale map of the practice board with walls, black line, targets and start poses"></svg>
+      <div class="map-caption"><span>1 square = 10 cm · drawn to scale</span><span>Positions within about 5 cm</span></div>
+    </div>
+
+    <div class="panel">
+      <div class="readout" aria-live="polite">
+        <div><div class="lbl">Pointer on the board</div><div class="big" id="cursor">x —  y —</div></div>
+        <div><div class="lbl">From T1</div><div class="big" id="fromT1">—</div></div>
+      </div>
+
+      <div class="group">
+        <h3>Start pose → T1</h3>
+        <div class="pose-buttons" id="poseButtons" role="group" aria-label="Choose a marked start pose"></div>
+        <div class="pose-info" id="poseInfo"></div>
+        <p class="hint" id="poseHint"></p>
+      </div>
+
+      <div class="group">
+        <h3>Layers</h3>
+        <div class="layers" id="layers">
+          <label><input type="checkbox" id="L-grid" checked><span>Grid</span></label>
+          <label><input type="checkbox" id="L-line" checked><span>Black line</span></label>
+          <label><input type="checkbox" id="L-decoy" checked><span>Decoys</span></label>
+          <label><input type="checkbox" id="L-walls" checked><span>Walls</span></label>
+          <label><input type="checkbox" id="L-poses" checked><span>Start poses</span></label>
+          <label><input type="checkbox" id="L-plan" checked><span>Planned moves</span></label>
+          <label><input type="checkbox" id="L-notes" checked><span>Landmarks</span></label>
+        </div>
+      </div>
+
+      <div class="group">
+        <h3>Landmarks on the route</h3>
+        <ul class="notes" id="notes"></ul>
+      </div>
+    </div>
+  </div>
+
+  <section class="block">
+    <header>
+      <h2>Key coordinates</h2>
+      <p>The numbers your code needs. They are also in <code>field_map.h</code> at the bottom of the page.</p>
+    </header>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Feature</th><th class="n">x cm</th><th class="n">y cm</th><th>Notes</th></tr></thead>
+        <tbody id="coords"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <header>
+      <h2>A 90-second run</h2>
+      <p>A time budget for the whole run, drawn to scale. The robot must shut itself down at 90 s, so the plan stops at 88 s and keeps 10 s spare.</p>
+    </header>
+    <div class="timeline">
+      <div class="bar" id="bar"></div>
+      <div class="ticks" id="ticks"></div>
+      <ol class="phases" id="phases"></ol>
+    </div>
+  </section>
+
+  <section class="block">
+    <header>
+      <h2>Input for the build</h2>
+      <p>How each stage can work with your robot as it is now, and what to add with the Rs 500.</p>
+    </header>
+    <div class="advice">
+      <article>
+        <h3>Find yourself at the start</h3>
+        <p>The start box has 30 cm walls on three sides: behind you and up both sides to about y = 58. The fourth side is open up-field.</p>
+        <ul>
+          <li>Spin slowly through 360° and log the right ultrasonic distance against heading. Each wall shows up as a dip; the bottom of a dip is the square-on distance to that wall.</li>
+          <li>The open side gives long readings or no echo. That direction is up-field (heading 90°).</li>
+          <li>Back-wall dip gives <b>y</b>. The two side-wall dips each give <b>x</b> (from the left and from the right); average them, and treat a big mismatch as a bad sweep.</li>
+          <li>Add the distance from the sensor face to the robot centre to every reading.</li>
+          <li>Measuring the turn angle by time did not work well on your 10° search. A gyro (MPU6050) makes this sweep, and every later turn, reliable.</li>
+        </ul>
+      </article>
+      <article>
+        <h3>Drop at T1</h3>
+        <ul>
+          <li>Put the drop chute on the middle of the wheel axle. The robot turns about that point, so the drop spot does not move when the heading is slightly off, and all the maths uses one point.</li>
+          <li>Drop something flat that will not roll, such as a large washer or a coin stack with felt underneath. Its centre is unambiguous. Avoid balls.</li>
+          <li>Turn to the bearing of T1, then drive the distance with the gyro holding the heading. The table on the left gives the turn and distance from each marked pose.</li>
+          <li>One SG90 servo can release the item and later swing the pointer out.</li>
+        </ul>
+      </article>
+      <article>
+        <h3>From T1 to the pocket</h3>
+        <ul>
+          <li>On the practice board the line circles T1 about 30–40 cm out. After the drop, face right (heading 0°) and drive about 39 cm until the line sensors see black, then turn left and follow it up the field.</li>
+          <li>Going round the loop the other way ends at the dead end (B). If you reach it, turn round.</li>
+          <li>The passage between the two walls is about 29 cm centre to centre, so roughly 27 cm clear for a robot that must fit a 25 cm box. Follow the line slowly here.</li>
+          <li>Just past the passage the line forks (D). The right branch goes over the T-shaped wall and stops. Keep left.</li>
+          <li>The hairpin (E) is a turn of about 140° to the left. Slow down; if the line is lost, pivot left on the spot until it is found again.</li>
+          <li>Treat black seen by an outer line sensor near the board edge as the border, not the line, and stop.</li>
+        </ul>
+      </article>
+      <article>
+        <h3>The last 25 cm to T2</h3>
+        <ul>
+          <li>The line ends at the open mouth of a pocket between two rails, about 40 cm wide and 26 cm deep. T2 is estimated against the middle of the rung at the back (rung C2).</li>
+          <li>At the line end, turn right about 40° to face into the pocket (heading about −63°).</li>
+          <li>Drive in using your current wall-follow code: the right ultrasonic sees the left rail (W1). For a 25 cm robot, hold about 7–8 cm from the side to stay centred.</li>
+          <li>Stop when the front sensor reads the rung at the pointer's length, then unfold the pointer. The pointer must stay on the T2 side of the rung, so do not poke over it.</li>
+        </ul>
+      </article>
+      <article>
+        <h3>Competition II: the speed race</h3>
+        <ul>
+          <li>Your right-side wall follower is already most of the code for the circular track. With the sensor on the right, drive anticlockwise so the outer wall stays on your right. If the organisers fix the direction the other way, move the sensor to the left side.</li>
+          <li>Add a fixed turn so the robot curves by itself and the sensor only trims: inner wheel speed ÷ outer = (R − b/2) ÷ (R + b/2). With the robot centre about R = 105 cm from the middle and wheels b = 18 cm apart, the inner wheel runs about 84% of the outer.</li>
+          <li>The wall is smooth and slippery, which invites a mechanical guide: two small rollers on the right side touching the wall, with the robot steered slightly into it, can run flat out with no sensing at all.</li>
+        </ul>
+      </article>
+      <article>
+        <h3>What to buy with Rs 500</h3>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Part</th><th>Why</th><th class="n">Approx. Rs</th></tr></thead>
+            <tbody>
+              <tr><td>MPU6050 gyro</td><td>Turns by angle, heading hold, the start sweep</td><td class="n">150–250</td></tr>
+              <tr><td>3 × TCRT5000 line sensors</td><td>Line following, board-edge detection</td><td class="n">90–180</td></tr>
+              <tr><td>SG90 servo</td><td>Drop at T1, pointer release</td><td class="n">90–150</td></tr>
+              <tr><td>2nd HC-SR04 (front)</td><td>Stop at the rung, distance to walls ahead</td><td class="n">60–100</td></tr>
+              <tr><td>Wheel encoders</td><td>Distance driven; skip if the makerspace has them</td><td class="n">80–160</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="hint">Buy in this order. Prices are rough online prices in India, so check before listing them. Wire, tape and wheels are free under the rules.</p>
+      </article>
+      <article>
+        <h3>Pins on the Pico</h3>
+        <ul>
+          <li>Full wiring, breadboard layout and pin map: <a href="https://claude.ai/artifact/EXYQazysHZgRYpmeCJL3yS">IM Robot Wiring</a>.</li>
+          <li>Used: GP10–GP15 motors through the optocouplers, GP16/17 right ultrasonic, GP18–GP21 encoders, GP22/GP28 front ultrasonic, GP26/GP27 IR.</li>
+          <li>Spare for the next parts: gyro on GP4 (SDA) and GP5 (SCL), start button GP2, servo GP3 (wired directly, not through the optocouplers), line sensors GP6–GP8.</li>
+          <li>Both ultrasonic ECHO pins go through a 1 kΩ / 2 kΩ divider: ECHO outputs 5 V and the Pico's pins take 3.3 V.</li>
+          <li>Start a 90 s timer when the run starts and call <code>stopMotors()</code> forever once it passes 88 s.</li>
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  <div class="callout">
+    <h3>Check before you trust the map</h3>
+    <ul>
+      <li>Everything here comes from one angled photo, so positions are good to about 5 cm, and the far walls are the least certain. Tape-measure T1, rung C2 and the passage before tuning numbers.</li>
+      <li>T2 is not marked on the board. Its position comes from Figure 1 of the rules (against the middle of the rung, inside the pocket) and from the clip on that rung. Ask the organisers to confirm it.</li>
+      <li>The competition board gets new decoy lines, and the start region's top edge (dashed, assumed at y = 55) is not drawn on the practice board.</li>
+      <li>The start-pose headings assume the stem of each yellow T is the robot's forward direction.</li>
+      <li>Check your robot, wires included, fits through 27 cm and inside a 25 cm box with the pointer folded.</li>
+    </ul>
+  </div>
+
+  <section class="block">
+    <div class="codehead">
+      <header style="display:grid;gap:6px">
+        <h2>field_map.h</h2>
+        <p class="hint">Put this file next to your <code>.ino</code> and add <code>#include "field_map.h"</code>.</p>
+      </header>
+      <button class="copy" id="copyBtn" type="button">Copy file</button>
+    </div>
+    <pre class="code" id="code"></pre>
+  </section>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const L = 244, W = 122;
+  const F = {
+    t1: [58.4, 97.0],
+    t2: [51.1, 179.5],
+    poses: [
+      { n: 1, x: 13.9, y: 45.2, h: -48, face: "down-right, toward the back wall" },
+      { n: 2, x: 47.1, y: 34.3, h: 39, face: "up-field and right" },
+      { n: 3, x: 56.8, y: 19.4, h: 87, face: "up-field" },
+      { n: 4, x: 76.7, y: 48.5, h: -123, face: "down-left, toward the back wall" },
+      { n: 5, x: 85.4, y: 33.4, h: 1, face: "right, toward the right wall" },
+      { n: 6, x: 105.6, y: 16.5, h: 134, face: "up-field and left" }
+    ],
+    line: [[94.0,114.8],[65.2,123.3],[42.1,125.9],[19.0,122.8],[16.2,108.3],[20.6,91.2],[28.4,78.6],[38.7,68.9],[52.1,63.7],[65.0,63.4],[77.8,66.4],[85.9,73.4],[91.9,83.7],[98.9,101.2],[102.9,118.7],[105.2,134.1],[104.7,146.0],[102.3,157.2],[97.8,164.9],[90.1,177.5],[80.0,198.8],[73.4,214.0],[70.5,224.5],[67.5,228.9],[58.9,229.8],[44.2,224.6],[18.5,213.7],[32.9,209.1],[50.5,202.0]],
+    hairpinIndex: 26,
+    branch: [[73.4,214.0],[75.9,220.3],[81.0,225.0],[91.0,232.0],[100.7,232.5],[107.6,227.8],[107.8,221.9],[106.7,217.3]],
+    decoys: [[[12.8,162.2],[20.9,152.2],[28.1,142.3],[32.6,131.5]], [[63.4,156.8],[66.9,144.9],[71.1,127.7]]],
+    walls15: [
+      { id: "W1", a: [22.4,190.6], b: [48.7,139.7], note: "Left rail" },
+      { id: "W2", a: [58.5,209.6], b: [85.8,156.8], note: "Right rail, one side of the passage" },
+      { id: "C1", a: [19.1,172.3], b: [29.2,177.5], note: "Stub on the left rail" },
+      { id: "C2", a: [34.3,167.5], b: [70.6,186.2], note: "Upper rung, T2 is against its far side" },
+      { id: "C3", a: [43.8,149.3], b: [80.0,168.0], note: "Lower rung" },
+      { id: "R1", a: [88.1,215.8], b: [106.1,181.0], note: "Other side of the passage" },
+      { id: "R2", a: [95.7,201.2], b: [109.3,208.2], note: "Stub on R1" }
+    ],
+    landmarks: [
+      { k: "A", p: [97.0, 97.0], name: "Loop entry", text: "From T1 face right and drive about 39 cm to meet the line here. Turn left and follow it up the field." },
+      { k: "B", p: [94.0, 114.8], name: "Dead end", text: "Going round the loop the wrong way ends here. Turn round." },
+      { k: "C", p: [84.0, 192.0], name: "Passage", text: "About 29 cm wall centre to wall centre, roughly 27 cm clear. The line runs down its middle." },
+      { k: "D", p: [73.4, 214.0], name: "Fork", text: "The right branch loops over the T-shaped wall and stops. Keep left." },
+      { k: "E", p: [18.5, 213.7], name: "Hairpin", text: "About 140° to the left. Slow down here." },
+      { k: "F", p: [50.5, 202.0], name: "Line end", text: "Mouth of the T2 pocket. Turn right about 40° to face into it (heading about −63°)." }
+    ]
+  };
+
+  const NS = "http://www.w3.org/2000/svg";
+  const sx = x => x, sy = y => L - y;
+  const el = (tag, attrs = {}, parent) => {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  };
+  const toSvg = pts => pts.map(([x, y]) => [sx(x), sy(y)]);
+  const smooth = pts => {
+    let d = `M${pts[0][0]},${pts[0][1]}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+      const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
+      const c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+      d += ` C${c1[0].toFixed(2)},${c1[1].toFixed(2)} ${c2[0].toFixed(2)},${c2[1].toFixed(2)} ${p2[0]},${p2[1]}`;
+    }
+    return d;
+  };
+  const fmt = v => (Math.round(v * 10) / 10).toFixed(1);
+  const bearing = (a, b) => Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI;
+  const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const wrap = d => { while (d > 180) d -= 360; while (d < -180) d += 360; return d; };
+
+  const svg = document.getElementById("map");
+  const defs = el("defs", {}, svg);
+  const mk = el("marker", { id: "arrow", viewBox: "0 0 10 10", refX: "8", refY: "5", markerWidth: "5", markerHeight: "5", orient: "auto-start-reverse" }, defs);
+  el("path", { d: "M0,0 L10,5 L0,10 z", fill: "var(--route)" }, mk);
+
+  // board
+  const gBoard = el("g", {}, svg);
+  el("rect", { x: 0, y: 0, width: W, height: L, fill: "var(--board-band)" }, gBoard);
+  el("rect", { x: 5, y: 5, width: W - 10, height: L - 10, fill: "var(--board)" }, gBoard);
+
+  // grid
+  const gGrid = el("g", { id: "g-grid" }, svg);
+  for (let x = 10; x < W - 5; x += 10) el("line", { x1: x, y1: 5, x2: x, y2: L - 5, stroke: x % 50 === 0 ? "var(--grid-major)" : "var(--grid)", "stroke-width": x % 50 === 0 ? 0.45 : 0.3 }, gGrid);
+  for (let y = 10; y < L - 5; y += 10) el("line", { x1: 5, y1: sy(y), x2: W - 5, y2: sy(y), stroke: y % 50 === 0 ? "var(--grid-major)" : "var(--grid)", "stroke-width": y % 50 === 0 ? 0.45 : 0.3 }, gGrid);
+
+  // axis labels (outside the board, page colours)
+  const gAxes = el("g", {}, svg);
+  for (let y = 0; y <= 240; y += 20) { const t = el("text", { x: -2.5, y: sy(y) + 1.2, "text-anchor": "end", "font-size": 3.4, fill: "var(--muted)", "font-family": "IBM Plex Mono, monospace" }, gAxes); t.textContent = y; }
+  for (let x = 0; x <= 120; x += 20) { const t = el("text", { x: sx(x), y: L + 8.5, "text-anchor": "middle", "font-size": 3.4, fill: "var(--muted)", "font-family": "IBM Plex Mono, monospace" }, gAxes); t.textContent = x; }
+  const ty = el("text", { x: -9.5, y: -4, "font-size": 3.4, fill: "var(--muted)", "font-family": "IBM Plex Mono, monospace" }, gAxes); ty.textContent = "y cm";
+  const tx = el("text", { x: W + 4.5, y: L + 8.5, "font-size": 3.4, fill: "var(--muted)", "font-family": "IBM Plex Mono, monospace" }, gAxes); tx.textContent = "x cm";
+
+  // start region edge (assumed)
+  const gStart = el("g", {}, svg);
+  el("line", { x1: 5, y1: sy(55), x2: W - 5, y2: sy(55), stroke: "var(--map-text)", "stroke-width": 0.4, "stroke-dasharray": "2 1.6", opacity: 0.55 }, gStart);
+  const st = el("text", { x: W - 7, y: sy(55) - 1.5, "text-anchor": "end", "font-size": 3, class: "lbl-map", opacity: 0.75 }, gStart); st.textContent = "start region ≈ y 55";
+
+  // black line, decoys
+  const gLine = el("g", { id: "g-line" }, svg);
+  const sl = toSvg(F.line);
+  const lineA = sl.slice(0, F.hairpinIndex + 1), lineB = sl.slice(F.hairpinIndex);
+  el("path", { d: smooth(lineA) + " " + smooth(lineB).replace(/^M/, "L"), fill: "none", stroke: "var(--tape)", "stroke-width": 3, "stroke-linecap": "round", "stroke-linejoin": "round" }, gLine);
+  el("path", { d: smooth(toSvg(F.branch)), fill: "none", stroke: "var(--tape)", "stroke-width": 3, "stroke-linecap": "round" }, gLine);
+  const gDecoy = el("g", { id: "g-decoy" }, svg);
+  F.decoys.forEach(d => el("path", { d: smooth(toSvg(d)), fill: "none", stroke: "var(--tape)", "stroke-width": 3, "stroke-linecap": "round" }, gDecoy));
+  const dl1 = el("text", { x: 7.5, y: sy(166), "font-size": 3, class: "lbl-map" }, gDecoy); dl1.textContent = "decoy";
+  const dl2 = el("text", { x: 72.5, y: sy(146), "font-size": 3, class: "lbl-map" }, gDecoy); dl2.textContent = "decoy";
+
+  // walls
+  const gWalls = el("g", { id: "g-walls" }, svg);
+  el("rect", { x: -2.6, y: L, width: W + 5.2, height: 2.6, fill: "var(--wall-tall)" }, gWalls);
+  el("rect", { x: -2.6, y: sy(58), width: 2.6, height: 58, fill: "var(--wall-tall)" }, gWalls);
+  el("rect", { x: W, y: sy(58), width: 2.6, height: 58, fill: "var(--wall-tall)" }, gWalls);
+  const wl = el("text", { x: W / 2, y: L + 2.05, "text-anchor": "middle", "font-size": 2.0, fill: "#ffffff", "font-family": "IBM Plex Mono, monospace" }, gWalls); wl.textContent = "30 cm wall";
+  F.walls15.forEach(w => {
+    el("line", { x1: sx(w.a[0]), y1: sy(w.a[1]), x2: sx(w.b[0]), y2: sy(w.b[1]), stroke: "var(--wall)", "stroke-width": 1.8, "stroke-linecap": "square" }, gWalls);
+    const mx = (w.a[0] + w.b[0]) / 2, my = (w.a[1] + w.b[1]) / 2;
+    const off = { W1: [-4.5, 0], W2: [-2.5, -3], C1: [-3.5, 3.5], C2: [9.5, 10.5], C3: [-4, 5], R1: [4.5, 0], R2: [1, 3.8] }[w.id];
+    const t = el("text", { x: sx(mx + off[0]), y: sy(my + off[1]) + 1, "text-anchor": "middle", "font-size": 3, class: "lbl-map", "font-weight": 500 }, gWalls); t.textContent = w.id;
+  });
+
+  // targets
+  const gT = el("g", {}, svg);
+  el("circle", { cx: sx(F.t1[0]), cy: sy(F.t1[1]), r: 3.2, fill: "none", stroke: "var(--t1)", "stroke-width": 1.1 }, gT);
+  el("path", { d: `M${sx(F.t1[0]) - 1.2},${sy(F.t1[1]) - 1.2} l2.4,2.4 m0,-2.4 l-2.4,2.4`, stroke: "#c0262d", "stroke-width": 0.5 }, gT);
+  const t1l = el("text", { x: sx(F.t1[0]) - 4.5, y: sy(F.t1[1]) - 2.2, "text-anchor": "end", "font-size": 3.6, class: "lbl-map", "font-weight": 500 }, gT); t1l.textContent = "T1";
+  el("circle", { cx: sx(F.t2[0]), cy: sy(F.t2[1]), r: 5, fill: "none", stroke: "var(--t2)", "stroke-width": 0.5, "stroke-dasharray": "1.2 1" }, gT);
+  el("circle", { cx: sx(F.t2[0]), cy: sy(F.t2[1]), r: 1.3, fill: "var(--t2)" }, gT);
+  const t2l = el("text", { x: sx(F.t2[0]) - 6, y: sy(F.t2[1]) + 1.2, "text-anchor": "end", "font-size": 3.4, class: "lbl-map", "font-weight": 500 }, gT); t2l.textContent = "T2 est.";
+
+  // planned moves (selected pose → T1 → loop entry)
+  const gPlan = el("g", { id: "g-plan" }, svg);
+  const route = el("line", { stroke: "var(--route)", "stroke-width": 0.8, "stroke-dasharray": "2.2 1.4", "marker-end": "url(#arrow)" }, gPlan);
+  el("line", { x1: sx(F.t1[0]) + 3.6, y1: sy(F.t1[1]), x2: sx(96), y2: sy(97), stroke: "var(--route)", "stroke-width": 0.8, "stroke-dasharray": "0.6 1.2", "stroke-linecap": "round", "marker-end": "url(#arrow)" }, gPlan);
+  const foot = el("rect", { width: 25, height: 25, x: -12.5, y: -12.5, rx: 1.5, fill: "var(--accent)", "fill-opacity": 0.14, stroke: "var(--accent)", "stroke-width": 0.5 }, gPlan);
+
+  // start poses
+  const gPoses = el("g", { id: "g-poses" }, svg);
+  const poseEls = {};
+  F.poses.forEach(p => {
+    const g = el("g", { class: "feature pose-mark", transform: `translate(${sx(p.x)},${sy(p.y)}) rotate(${-p.h})`, tabindex: "-1" }, gPoses);
+    el("line", { x1: 0, y1: -7.5, x2: 0, y2: 7.5, stroke: "var(--accent)", "stroke-width": 0.7 }, g);
+    el("line", { x1: 0, y1: 0, x2: 14, y2: 0, stroke: "var(--accent)", "stroke-width": 0.7 }, g);
+    el("path", { d: "M14,0 l-2.6,-1.6 v3.2 z", fill: "var(--accent)" }, g);
+    el("circle", { cx: 0, cy: 0, r: 1.1, fill: "var(--map-text)" }, g);
+    el("circle", { cx: 4, cy: 0, r: 9, fill: "transparent" }, g);
+    const hr = p.h * Math.PI / 180;
+    const lab = el("text", { x: sx(p.x - 5.5 * Math.cos(hr)), y: sy(p.y - 5.5 * Math.sin(hr)) + 1.3, "text-anchor": "middle", "font-size": 3.6, class: "lbl-map", "font-weight": 600 }, gPoses);
+    lab.textContent = p.n;
+    g.addEventListener("click", () => selectPose(p.n));
+    poseEls[p.n] = g;
+  });
+
+  // landmarks
+  const gNotes = el("g", { id: "g-notes" }, svg);
+  const lmOff = { A: [3.5, -6.5], B: [-2, 7.5], C: [-7, -3], D: [-6.5, 4], E: [-1, -6.5], F: [0, 7.5] };
+  F.landmarks.forEach(m => {
+    const [ox, oy] = lmOff[m.k];
+    const cx = sx(m.p[0] + ox), cy = sy(m.p[1] + oy);
+    el("line", { x1: sx(m.p[0]), y1: sy(m.p[1]), x2: cx, y2: cy, stroke: "var(--map-text)", "stroke-width": 0.3 }, gNotes);
+    el("circle", { cx, cy, r: 2.6, fill: "var(--map-text)" }, gNotes);
+    const t = el("text", { x: cx, y: cy + 1.15, "text-anchor": "middle", "font-size": 3.2, fill: "var(--board)", "font-family": "IBM Plex Mono, monospace", "font-weight": 600 }, gNotes); t.textContent = m.k;
+  });
+
+  // cursor
+  const cursorDot = el("circle", { r: 0.9, fill: "var(--route)", opacity: 0 }, svg);
+  const cursorOut = document.getElementById("cursor"), fromOut = document.getElementById("fromT1");
+  const pt = svg.createSVGPoint();
+  svg.addEventListener("pointermove", e => {
+    pt.x = e.clientX; pt.y = e.clientY;
+    const m = svg.getScreenCTM(); if (!m) return;
+    const p = pt.matrixTransform(m.inverse());
+    const x = p.x, y = L - p.y;
+    if (x < 0 || x > W || y < 0 || y > L) { cursorOut.textContent = "x —  y —"; fromOut.textContent = "—"; cursorDot.setAttribute("opacity", 0); return; }
+    cursorOut.textContent = `x ${fmt(x).padStart(5, " ")}  y ${fmt(y).padStart(5, " ")}`;
+    fromOut.textContent = `${fmt(dist(F.t1, [x, y]))} cm @ ${Math.round(bearing(F.t1, [x, y]))}°`;
+    cursorDot.setAttribute("cx", p.x); cursorDot.setAttribute("cy", p.y); cursorDot.setAttribute("opacity", 1);
+  });
+  svg.addEventListener("pointerleave", () => cursorDot.setAttribute("opacity", 0));
+
+  // pose selection
+  const btnWrap = document.getElementById("poseButtons");
+  const info = document.getElementById("poseInfo"), hint = document.getElementById("poseHint");
+  F.poses.forEach(p => {
+    const b = document.createElement("button");
+    b.type = "button"; b.id = "pose-" + p.n; b.textContent = p.n; b.setAttribute("aria-pressed", "false");
+    b.addEventListener("click", () => selectPose(p.n));
+    btnWrap.appendChild(b);
+  });
+  function selectPose(n) {
+    const p = F.poses.find(q => q.n === n);
+    const b = bearing([p.x, p.y], F.t1), d = dist([p.x, p.y], F.t1), turn = wrap(b - p.h);
+    route.setAttribute("x1", sx(p.x)); route.setAttribute("y1", sy(p.y));
+    const ux = (F.t1[0] - p.x) / d, uy = (F.t1[1] - p.y) / d;
+    route.setAttribute("x2", sx(F.t1[0] - ux * 4)); route.setAttribute("y2", sy(F.t1[1] - uy * 4));
+    foot.setAttribute("transform", `translate(${sx(p.x)},${sy(p.y)}) rotate(${-p.h})`);
+    F.poses.forEach(q => { poseEls[q.n].style.opacity = q.n === n ? 1 : 0.45; document.getElementById("pose-" + q.n).setAttribute("aria-pressed", q.n === n ? "true" : "false"); });
+    const dir = turn >= 0 ? "left" : "right";
+    info.innerHTML = `
+      <div><span class="k">Position</span><span class="v">${fmt(p.x)}, ${fmt(p.y)}</span></div>
+      <div><span class="k">Heading</span><span class="v">${p.h}°</span></div>
+      <div><span class="k">Turn</span><span class="v">${dir} ${Math.abs(Math.round(turn))}°</span></div>
+      <div><span class="k">Drive</span><span class="v">${fmt(d)} cm</span></div>`;
+    hint.textContent = `Pose ${n} faces ${p.face}. The orange square is a 25 cm robot at this pose.`;
+    try { localStorage.setItem("im-map-pose", String(n)); } catch (e) {}
+  }
+  let startPose = 3;
+  try { const s = parseInt(localStorage.getItem("im-map-pose"), 10); if (s >= 1 && s <= 6) startPose = s; } catch (e) {}
+  selectPose(startPose);
+
+  // layers
+  const layerMap = { "L-grid": "g-grid", "L-line": "g-line", "L-decoy": "g-decoy", "L-walls": "g-walls", "L-poses": "g-poses", "L-plan": "g-plan", "L-notes": "g-notes" };
+  Object.entries(layerMap).forEach(([cb, g]) => {
+    const box = document.getElementById(cb), grp = document.getElementById(g);
+    box.addEventListener("change", () => { grp.style.display = box.checked ? "" : "none"; });
+  });
+
+  // landmark list
+  const notes = document.getElementById("notes");
+  F.landmarks.forEach(m => {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="badge">${m.k}</span><span><b>${m.name}</b> <span class="co">(${fmt(m.p[0])}, ${fmt(m.p[1])})</span><br>${m.text}</span>`;
+    notes.appendChild(li);
+  });
+
+  // coordinates table
+  const rows = [
+    ["T1 (green ring)", F.t1, "Known position; the robot cannot see the ring"],
+    ["T2 (estimate)", F.t2, "Against the middle of rung C2, inside the pocket"],
+    ["Loop entry", [97.0, 97.0], "About 39 cm straight right of T1"],
+    ["Loop dead end", [94.0, 114.8], "Wrong way round the loop"],
+    ["Passage centre", [84.0, 192.0], "29 cm between W2 and R1, heading about 117° going up"],
+    ["Fork", [73.4, 214.0], "Keep left"],
+    ["Hairpin", [18.5, 213.7], "About 140° left turn"],
+    ["Line end / pocket mouth", [50.5, 202.0], "Pocket heading about −63°, 40 cm wide"],
+    ["Start-end side walls", [0, 58], "30 cm walls at x = 0 and x = 122, from y = 0 to about 58"]
+  ];
+  const tb = document.getElementById("coords");
+  rows.forEach(([name, p, note]) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${name}</td><td class="n">${fmt(p[0])}</td><td class="n">${fmt(p[1])}</td><td>${note}</td>`;
+    tb.appendChild(tr);
+  });
+
+  // timeline
+  const phases = [
+    { n: 1, s: 0, e: 15, name: "Find position", text: "360° sweep against the three start walls, work out x, y and heading.", c: "var(--phase-1)" },
+    { n: 2, s: 15, e: 25, name: "Drive to T1", text: "Turn to T1's bearing, drive 50–95 cm holding the heading.", c: "var(--phase-2)" },
+    { n: 3, s: 25, e: 28, name: "Drop", text: "Servo releases the flat item over T1.", c: "var(--phase-3)" },
+    { n: 4, s: 28, e: 33, name: "Find the line", text: "Face right, drive about 39 cm to the loop, turn left onto it.", c: "var(--phase-4)" },
+    { n: 5, s: 33, e: 63, name: "Follow the line", text: "About 240 cm at roughly 8 cm/s: passage, fork (keep left), hairpin.", c: "var(--phase-5)" },
+    { n: 6, s: 63, e: 78, name: "Into the pocket", text: "Turn right about 40°, wall-follow the left rail, stop at the rung, unfold the pointer.", c: "var(--phase-6)" }
+  ];
+  const bar = document.getElementById("bar"), ol = document.getElementById("phases");
+  phases.forEach(p => {
+    const d = document.createElement("div");
+    d.style.flex = `${p.e - p.s} 0 0`; d.style.background = p.c; d.textContent = p.n; d.title = `${p.name}: ${p.s}–${p.e} s`;
+    bar.appendChild(d);
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="sw" style="background:${p.c}"></span><span><b>${p.n}. ${p.name}</b> <span class="t">${p.s}–${p.e} s</span><br>${p.text}</span>`;
+    ol.appendChild(li);
+  });
+  const spare = document.createElement("div"); spare.className = "m"; spare.style.flex = "10 0 0"; spare.style.background = "var(--phase-m)"; spare.textContent = "spare"; bar.appendChild(spare);
+  const stop = document.createElement("div"); stop.style.flex = "2 0 0"; stop.style.background = "var(--fg)"; stop.title = "Motors off from 88 s"; bar.appendChild(stop);
+  const ticks = document.getElementById("ticks");
+  [0, 15, 30, 45, 60, 75, 90].forEach(s => { const t = document.createElement("span"); t.style.left = (s / 90 * 100) + "%"; t.textContent = s + " s"; ticks.appendChild(t); });
+  const li = document.createElement("li");
+  li.innerHTML = `<span class="sw" style="background:var(--fg)"></span><span><b>Stop</b> <span class="t">88–90 s</span><br>Motors off and stay off, whatever stage the robot is in.</span>`;
+  ol.appendChild(li);
+
+  // header file
+  const code = document.getElementById("code");
+  code.textContent = document.getElementById("field-map-src").textContent.replace(/^\n/, "");
+  const btn = document.getElementById("copyBtn");
+  btn.addEventListener("click", () => {
+    const done = ok => { btn.textContent = ok ? "Copied" : "Selected, press Ctrl+C"; setTimeout(() => (btn.textContent = "Copy file"), 2200); };
+    const select = () => { const r = document.createRange(); r.selectNodeContents(code); const s = getSelection(); s.removeAllRanges(); s.addRange(r); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(code.textContent).then(() => done(true), () => { select(); done(false); });
+    } else { select(); done(false); }
+  });
+});
+</script>
+
+<script type="text/plain" id="field-map-src">
+// field_map.h - IM Project Competition practice field (Fall 2026)
+//
+// Measured from a photo of the practice board, so expect errors of about
+// 5 cm. Re-measure T1, the T2 rung and the passage with a tape before
+// tuning numbers against it. The competition board's decoys will differ.
+//
+// Frame: origin at the start-end LEFT corner of the board (outer edge),
+// standing behind the start wall and looking up the field.
+//   x = cm to the right   (0 .. 122)
+//   y = cm up the field   (0 .. 244)
+//   heading in degrees: 0 = facing right (+x), 90 = facing up-field,
+//   counter-clockwise positive (a left turn adds degrees).
+
+#pragma once
+#include <Arduino.h>
+
+struct FieldPoint   { float x; float y; };
+struct FieldSegment { FieldPoint a; FieldPoint b; };
+struct FieldPose    { float x; float y; float headingDeg; };
+
+const float BOARD_WIDTH_CM      = 122.0;
+const float BOARD_LENGTH_CM     = 244.0;
+const float BORDER_CM           = 5.0;   // black band on every edge
+const float START_REGION_TOP_CM = 55.0;  // assumed; not drawn on the practice board
+
+// Targets
+const FieldPoint TARGET_T1     = { 58.4,  97.0 };  // green ring on the board
+const FieldPoint TARGET_T2_EST = { 51.1, 179.5 };  // against the middle of rung C2 (estimate)
+
+// Line landmarks
+const FieldPoint LOOP_ENTRY    = { 97.0,  97.0 };  // drive +x from T1 to meet the line here
+const FieldPoint LOOP_DEAD_END = { 94.0, 114.8 };  // wrong way round the loop ends here
+const FieldPoint LINE_FORK     = { 73.4, 214.0 };  // keep LEFT here
+const FieldPoint LINE_HAIRPIN  = { 18.5, 213.7 };  // about 140 deg left turn
+const FieldPoint LINE_END      = { 50.5, 202.0 };  // mouth of the T2 pocket
+
+const float POCKET_HEADING_DEG = -62.7;  // facing into the T2 pocket, along the rails
+const float POCKET_WIDTH_CM    = 40.8;   // rail centre to rail centre
+const float PASSAGE_WIDTH_CM   = 29.1;   // wall centre to wall centre
+
+// Start poses marked in yellow on the practice board.
+// Assumes the stem of each yellow "T" is the robot's forward direction.
+const FieldPose START_POSES[6] = {
+  {  13.9, 45.2,  -48 },  // 1
+  {  47.1, 34.3,   39 },  // 2
+  {  56.8, 19.4,   87 },  // 3
+  {  76.7, 48.5, -123 },  // 4
+  {  85.4, 33.4,    1 },  // 5
+  { 105.6, 16.5,  134 },  // 6
+};
+
+// 30 cm walls at the start end (standing on the board edge)
+const FieldSegment WALLS_30CM[3] = {
+  { {   0.0, 0.0 }, { 122.0,  0.0 } },  // back wall
+  { {   0.0, 0.0 }, {   0.0, 58.0 } },  // left wall
+  { { 122.0, 0.0 }, { 122.0, 58.0 } },  // right wall
+};
+
+// 15 cm interior walls (wall centre lines)
+const FieldSegment WALLS_15CM[7] = {
+  { {  22.4, 190.6 }, {  48.7, 139.7 } },  // W1 left rail
+  { {  58.5, 209.6 }, {  85.8, 156.8 } },  // W2 right rail (passage side)
+  { {  19.1, 172.3 }, {  29.2, 177.5 } },  // C1 stub on W1
+  { {  34.3, 167.5 }, {  70.6, 186.2 } },  // C2 upper rung (T2 side)
+  { {  43.8, 149.3 }, {  80.0, 168.0 } },  // C3 lower rung
+  { {  88.1, 215.8 }, { 106.1, 181.0 } },  // R1 passage wall
+  { {  95.7, 201.2 }, { 109.3, 208.2 } },  // R2 stub on R1
+};
+
+// Centre of the black line, from the dead end of the loop round T1,
+// up the right side, through the passage, round the hairpin to the pocket.
+const FieldPoint LINE_PATH[] = {
+  { 94.0, 114.8 }, { 65.2, 123.3 }, { 42.1, 125.9 }, { 19.0, 122.8 },
+  { 16.2, 108.3 }, { 20.6,  91.2 }, { 28.4,  78.6 }, { 38.7,  68.9 },
+  { 52.1,  63.7 }, { 65.0,  63.4 }, { 77.8,  66.4 }, { 85.9,  73.4 },
+  { 91.9,  83.7 }, { 98.9, 101.2 }, {102.9, 118.7 }, {105.2, 134.1 },
+  {104.7, 146.0 }, {102.3, 157.2 }, { 97.8, 164.9 }, { 90.1, 177.5 },
+  { 80.0, 198.8 }, { 73.4, 214.0 }, { 70.5, 224.5 }, { 67.5, 228.9 },
+  { 58.9, 229.8 }, { 44.2, 224.6 }, { 18.5, 213.7 }, { 32.9, 209.1 },
+  { 50.5, 202.0 },
+};
+const int LINE_PATH_COUNT = sizeof(LINE_PATH) / sizeof(LINE_PATH[0]);
+
+// Bearing in degrees (same convention as headings) from one point to another.
+inline float fieldBearingDeg(FieldPoint from, FieldPoint to) {
+  return atan2(to.y - from.y, to.x - from.x) * 180.0 / PI;
+}
+
+// Straight-line distance in cm.
+inline float fieldDistanceCm(FieldPoint from, FieldPoint to) {
+  return hypot(to.x - from.x, to.y - from.y);
+}
+
+// Turn needed (deg, left = +) to face `to` from a pose, wrapped to -180..180.
+inline float fieldTurnToDeg(FieldPose pose, FieldPoint to) {
+  float turn = fieldBearingDeg({ pose.x, pose.y }, to) - pose.headingDeg;
+  while (turn > 180)  turn -= 360;
+  while (turn < -180) turn += 360;
+  return turn;
+}
+</script>
