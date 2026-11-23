@@ -1,50 +1,45 @@
 /*
   ==========================================
-       IM COMPETITION 1 - FULL RUN
+       IM COMPETITION 1 - FULL RUN, APPROACH 2
+       "find T1 with the black loop"
        Raspberry Pi Pico + L298N + 6 optocouplers
        2 encoder motors, 2 IR line sensors,
        2 HC-SR04 (RIGHT side + FRONT), servo for the drop
   ==========================================
 
-  WHERE THE TWO ULTRASONICS GO
-    RIGHT sensor : on the right side, pointing straight out to the
-                   right (90 degrees to the direction of travel).
-    FRONT sensor : at the front, in the middle, pointing straight
-                   ahead.
-    Both level, at the same height, LOWER than 15 cm (so they also
-    see the 15 cm walls near T2). Both on 5 V, ECHO through a
-    1k / 2k divider.
+  HOW THIS DIFFERS FROM APPROACH 1 (approach1_walls.ino)
+    Approach 1 measures its exact start position from the walls and
+    drives a calculated path to T1.
+    Approach 2 only takes a ROUGH position from the walls, then finds
+    T1 from the black loop that circles it:
+      - it drives across the loop (chord 1), noting the two points
+        where an IR saw the line,
+      - goes back to the middle of that chord, turns 90 degrees and
+        crosses the loop again (chord 2): two more points,
+      - it fits those 4 points onto the loop's shape from the map.
+        That gives its exact position.
+    The line itself places the robot, so wheel slip and errors from
+    the start do not carry over to T1.
+    It still DROPS WITH THE SERVO at T1, exactly like approach 1.
 
-  WHAT IT DOES (from any start position and direction)
+  WHAT IT DOES
+   1. ROUGH POSITION  Spins once reading both ultrasonics -> rough
+                      x, y and which way is up the field.
+   2. FIND T1         Two chords across the black loop (above).
+   3. DROP            Servo opens over T1.
+   4. TO THE LINE     Faces right, drives until an IR sees the loop.
+   5. FOLLOW LINE     Your line-follower speeds, to the end of the line.
+   6. INTO POCKET     Lines up with the T2 pocket, stays centred with
+                      the RIGHT sensor, stops with the FRONT sensor.
+   7. STOP            Motors off. Everything stops at 88 s anyway.
 
-   1. FIND POSITION  a) Spins once on the spot reading BOTH sensors.
-                        Start walls read close, the open side (up the
-                        field) reads far -> rough x, y, heading.
-                     b) Turns so one sensor faces the back wall and
-                        the other faces the NEARER side wall, then
-                        scans +-40 degrees -> exact heading, x and y
-                        at the same time.
-   2. GO TO T1       Turns to T1 and drives there with the encoders.
-                     Crossing the black loop round T1 corrects the
-                     position from the map.
-   3. DROP           Servo opens over T1.
-   4. TO THE LINE    Faces right, drives until an IR sees the loop.
-   5. FOLLOW LINE    Your line-follower speeds, to the end of the line.
-   6. INTO POCKET    Resets position at the line end, lines up with
-                     the T2 pocket, drives in staying centred with
-                     the RIGHT sensor and stops with the FRONT sensor
-                     so the pointer ends on T2.
-   7. STOP           Motors off. Everything stops at 88 s anyway.
+  NEEDS the practice-board loop around T1. If the competition board
+  has no loop, use approach 1 (approach1_walls.ino).
 
-  FIRST: run RUN_MODE 1, 2, 3 and fill in COUNTS_PER_CM and
-  WHEEL_BASE_CM. Measure the sensor offsets (CALIBRATION block).
+  The green ring at T1 may look black to the IR sensors. The code
+  ignores black closer than the loop can be, but test it.
 
-  BOARD COORDINATES (cm), from the field map
-    origin = start-end LEFT corner, x = right (0..122),
-    y = up the field (0..244); heading 0 = facing right,
-    90 = facing up the field
-
-  PINS
+  PINS (same as approach1_walls.ino)
     Right wheel : ENA GP0, IN1 GP1, IN2 GP2   (L298N OUT1/OUT2)
     Left wheel  : IN3 GP3, IN4 GP4, ENB GP5   (L298N OUT3/OUT4)
     Encoders    : left C1 GP14, C2 GP15 / right C1 GP12, C2 GP13
@@ -66,9 +61,9 @@
 //       102 cm, multiply COUNTS_PER_CM by 1.02
 //   3 = TURN TEST: robot spins 360 degrees. Turned too far ->
 //       raise WHEEL_BASE_CM; not far enough -> lower it
-//   4 = POSITION TEST: does step 1 only and prints x, y, heading.
-//       Put the robot on a known spot and compare (tape measure).
-//   5 = T1 TEST: steps 1-3 only (find position, go to T1, drop)
+//   4 = LOOP TEST: steps 1-2, prints the loop match, drives to T1
+//       and stops there (no drop) - check how close it is
+//   5 = T1 TEST: steps 1-3 only (rough position, find T1, drop)
 int RUN_MODE = 4;
 
 // ##########################################################
@@ -123,6 +118,16 @@ float LINE_LENGTH_CM = 228;   // join point to line end
 const int LOOP_N = 15;
 float LOOP_X[LOOP_N] = { 94.0, 65.2, 42.1, 19.0, 16.2, 20.6, 28.4, 38.7, 52.1, 65.0, 77.8, 85.9, 91.9, 98.9, 102.9 };
 float LOOP_Y[LOOP_N] = { 114.8, 123.3, 125.9, 122.8, 108.3, 91.2, 78.6, 68.9, 63.7, 63.4, 66.4, 73.4, 83.7, 101.2, 118.7 };
+
+// Rough middle of the loop: the robot aims here from the start
+float LOOP_MID_X = 58.0, LOOP_MID_Y = 93.9;
+
+// Chord limits (cm): black closer than MIN is ignored (the T1 ring),
+// no black within MAX means the chord failed.
+float CHORD1_MIN = 40, CHORD1_MAX = 110;
+float SIDE_MIN   = 20, SIDE_MAX   = 70;    // centre -> one side
+float CHORD2_MIN = 50, CHORD2_MAX = 120;   // side -> other side
+float LOOP_SEARCH_MAX = 120;               // start -> first black
 
 // ##########################################################
 //   SPEEDS  (encoder counts per 50 ms, about 60 = full speed)
@@ -204,7 +209,8 @@ struct Wheel {
 };
 
 enum Step {
-  S_SWEEP, S_ALIGN, S_SCAN, S_FACE_T1, S_GO_T1, S_DROP, S_FACE_LINE, S_FIND_LINE,
+  S_SWEEP, S_AIM_LOOP, S_TO_LOOP, S_CROSS, S_TO_M1, S_FACE_A, S_FIND_A,
+  S_FACE_B, S_FIND_B, S_MATCH, S_FACE_T1, S_GO_T1, S_DROP, S_FACE_LINE, S_FIND_LINE,
   S_FOLLOW, S_FACE_MOUTH, S_GO_MOUTH, S_FACE_POCKET, S_IN_POCKET, S_DONE
 };
 
@@ -226,15 +232,18 @@ unsigned long lastPrint = 0;
 
 float sweepStartTh = 0;
 
-// fine scan: both sensors, around heading SCAN_CENTRE
-const int SCAN_MAX = 200;
-float scanTh[SCAN_MAX];
-float scanF[SCAN_MAX];        // front sensor
-float scanR[SCAN_MAX];        // right sensor
-int scanN = 0;
-float SCAN_HALF_DEG = 40;
-float scanCentreDeg = 0;      // 0 = near right wall, -90 = near left wall
-bool nearRightWall = true;
+// chords across the loop (points where an IR first saw black)
+float e1x = 0, e1y = 0;       // chord 1 entry
+float m1x = 0, m1y = 0;       // middle of chord 1
+float ax = 0, ay = 0;         // chord 2, first side
+float chordDeg = 90;          // heading of chord 1
+float legStart = 0;           // distance at the start of a leg
+float whiteFrom = -1;         // distance where the IR went white
+
+// every point where an IR met the loop, in the robot's own map
+const int MAX_HITS = 6;
+float hitX[MAX_HITS], hitY[MAX_HITS];
+int nHits = 0;
 
 float pocketStartDist = 0;
 bool loopFixed = false;
@@ -552,71 +561,69 @@ void solvePosition() {
   Serial.print("  heading = "); Serial.println(rad2deg(poseTh));
 }
 
-// A flat wall scanned by a sensor gives a V of readings: they are
-// shortest when the sensor is square to the wall. The middle of the
-// V's two sides is the heading at which it was square.
-// Returns false if the V is not clean (another wall got in the way).
-bool squareHeading(float d[], float &squareTh, float &minD) {
-  float m = 999;
-  for (int i = 0; i < scanN; i++) if (d[i] > 0 && d[i] < m) m = d[i];
-  if (m > 150) return false;
-  float thr = m + max(1.5f, 0.05f * m);
+// where the IR sensors are (point between them, in front of centre)
+float sensorX() { return poseX + IR_FORWARD_CM * cos(poseTh); }
+float sensorY() { return poseY + IR_FORWARD_CM * sin(poseTh); }
 
-  int i1 = -1, i2 = -1;
-  for (int i = 0; i < scanN; i++) if (d[i] > 0 && d[i] <= thr) { i1 = i; break; }
-  for (int i = scanN - 1; i >= 0; i--) if (d[i] > 0 && d[i] <= thr) { i2 = i; break; }
-  if (i1 <= 0 || i2 >= scanN - 1 || i2 <= i1) return false;
-
-  squareTh = (scanTh[i1] + scanTh[i2]) / 2.0;
-  minD = m;
-  // rough heading is good to ~10 deg; a bigger answer is a bad scan
-  return fabs(wrapPi(squareTh - deg2rad(scanCentreDeg))) < deg2rad(12);
+// drive straight along a board heading, steering to hold it
+void driveStraight(float headingDeg, float rate) {
+  float err = wrapPi(deg2rad(headingDeg) - poseTh);
+  float steer = constrain(KP_HEADING * err, -rate, rate);
+  setWheels(rate - steer, rate + steer);
 }
 
-// mean reading within 4 degrees of a heading
-float readingAt(float d[], float th) {
-  float sum = 0; int n = 0;
-  for (int i = 0; i < scanN; i++)
-    if (d[i] > 0 && fabs(wrapPi(scanTh[i] - th)) < deg2rad(4)) { sum += d[i]; n++; }
-  return (n > 0) ? sum / n : -1;
+void addHit() {
+  if (nHits < MAX_HITS) { hitX[nHits] = sensorX(); hitY[nHits] = sensorY(); nHits++; }
 }
 
-// Near the RIGHT wall: scan around heading 0.
-//   FRONT sensor sees the right wall, RIGHT sensor sees the back wall.
-// Near the LEFT wall: scan around heading -90.
-//   FRONT sensor sees the back wall, RIGHT sensor sees the left wall.
-void solveScan() {
-  float thF = 0, thR = 0, mF = 0, mR = 0;
-  bool okF = squareHeading(scanF, thF, mF);
-  bool okR = squareHeading(scanR, thR, mR);
+// nearest point on the black loop (from the map) to (px, py)
+void nearestOnLoop(float px, float py, float &qx, float &qy) {
+  float bestD = 1e9;
+  qx = px; qy = py;
+  for (int i = 0; i < LOOP_N - 1; i++) {
+    float ax0 = LOOP_X[i], ay0 = LOOP_Y[i];
+    float vx = LOOP_X[i + 1] - ax0, vy = LOOP_Y[i + 1] - ay0;
+    float t = constrain(((px - ax0) * vx + (py - ay0) * vy) / (vx * vx + vy * vy), 0.0f, 1.0f);
+    float cx = ax0 + t * vx, cy = ay0 + t * vy;
+    float d = (cx - px) * (cx - px) + (cy - py) * (cy - py);
+    if (d < bestD) { bestD = d; qx = cx; qy = cy; }
+  }
+}
 
-  float centre = deg2rad(scanCentreDeg);
-  float squareTh = centre;
-  if (okF && okR)  squareTh = (thF + thR) / 2.0;
-  else if (okF)    squareTh = thF;
-  else if (okR)    squareTh = thR;
+// Fit the points where the IRs met the line onto the loop's shape.
+// Finds the shift that puts every point as close as possible to the
+// loop, then moves the robot's position by that shift. (The heading
+// is kept from the start sweep: on a round loop the turn cannot be
+// measured reliably, and near T1 a few degrees hardly matter.)
+void matchToLoop() {
+  if (nHits == 0) { Serial.println("NO LINE POINTS - keeping rough position"); return; }
 
-  float dF = readingAt(scanF, squareTh);
-  float dR = readingAt(scanR, squareTh);
-
-  // when both sensors are square, the robot truly faces scanCentreDeg
-  poseTh = wrapPi(poseTh - (squareTh - centre));
-
-  if (nearRightWall) {
-    if (dR > 0 && dR < 130) poseY = WALL_BACK_Y + dR + US_SIDE_CM;
-    if (dF > 0 && dF < 130) poseX = WALL_RIGHT_X - dF - US_FRONT_CM;
-  } else {
-    if (dF > 0 && dF < 130) poseY = WALL_BACK_Y + dF + US_FRONT_CM;
-    if (dR > 0 && dR < 130) poseX = WALL_LEFT_X + dR + US_SIDE_CM;
+  float tx = 0, ty = 0;
+  for (int it = 0; it < 20; it++) {
+    float dx = 0, dy = 0;
+    for (int i = 0; i < nHits; i++) {
+      float qx, qy;
+      nearestOnLoop(hitX[i] + tx, hitY[i] + ty, qx, qy);
+      dx += qx - (hitX[i] + tx);
+      dy += qy - (hitY[i] + ty);
+    }
+    tx += dx / nHits;
+    ty += dy / nHits;
   }
 
-  Serial.println("------ EXACT POSITION ------");
-  Serial.print("scan front ok: "); Serial.print(okF ? "yes" : "no");
-  Serial.print("  right ok: "); Serial.print(okR ? "yes" : "no");
-  Serial.print("  heading corrected by "); Serial.println(rad2deg(centre - squareTh));
-  Serial.print("x = "); Serial.print(poseX);
-  Serial.print("  y = "); Serial.print(poseY);
-  Serial.print("  heading = "); Serial.println(rad2deg(poseTh));
+  float moved = sqrt(tx * tx + ty * ty);
+  // a huge correction means a wrong line was seen: do not trust it
+  if (moved > 30) {
+    Serial.println("LOOP MATCH REJECTED - keeping rough position");
+    return;
+  }
+  poseX += tx;
+  poseY += ty;
+
+  Serial.print("LOOP MATCH with "); Serial.print(nHits);
+  Serial.print(" points: moved "); Serial.print(moved);
+  Serial.print(" cm -> x "); Serial.print(poseX);
+  Serial.print(" y "); Serial.println(poseY);
 }
 
 // ==========================================
@@ -783,54 +790,123 @@ void loop() {
       if (turnProgress >= 2 * PI + deg2rad(20)) {
         setWheels(0, 0);
         solvePosition();
-        nearRightWall = poseX > 61;
-        scanCentreDeg = nearRightWall ? 0 : -90;
-        step = S_ALIGN;
+        step = S_AIM_LOOP;
       } else {
         setWheels(-SWEEP_RATE, SWEEP_RATE);
       }
       break;
     }
 
-    case S_ALIGN:
-      if (faceHeading(scanCentreDeg - SCAN_HALF_DEG)) { scanN = 0; step = S_SCAN; }
+    // ---------- 2. FIND T1 FROM THE LOOP
+    case S_AIM_LOOP: {
+      // aim at the middle of the loop from the rough position
+      float h = rad2deg(atan2(LOOP_MID_Y - poseY, LOOP_MID_X - poseX));
+      if (faceHeading(h)) { chordDeg = h; legStart = travelled; step = S_TO_LOOP; }
+      break;
+    }
+
+    case S_TO_LOOP:
+      // drive until an IR sees the loop: chord 1 entry
+      if (lB || rB) {
+        e1x = sensorX(); e1y = sensorY();
+        addHit();
+        legStart = travelled; whiteFrom = -1;
+        Serial.println("LOOP ENTRY");
+        step = S_CROSS;
+      } else if (travelled - legStart > LOOP_SEARCH_MAX) {
+        Serial.println("LOOP NOT FOUND - using rough position");
+        step = S_MATCH;
+      } else {
+        driveStraight(chordDeg, SEARCH_RATE);
+      }
       break;
 
-    case S_SCAN: {
-      // slow scan; each tick reads both sensors
-      if (scanN < SCAN_MAX) {
-        scanTh[scanN] = poseTh;
-        scanF[scanN] = readFront();
-        scanR[scanN] = readRight();
-        scanN++;
-      }
-      if (wrapPi(poseTh - deg2rad(scanCentreDeg)) >= deg2rad(SCAN_HALF_DEG)) {
-        setWheels(0, 0);
-        solveScan();
-        if (RUN_MODE == 4) { controlTick(); motorsOff(); while (true) delay(1000); }
-        step = S_FACE_T1;
+    case S_CROSS: {
+      // keep going across the loop to the far side: chord 1 exit
+      float along = travelled - legStart;
+      if (!lB && !rB) { if (whiteFrom < 0) whiteFrom = along; }
+      if ((lB || rB) && whiteFrom >= 0 && along > CHORD1_MIN) {
+        m1x = (e1x + sensorX()) / 2;
+        m1y = (e1y + sensorY()) / 2;
+        addHit();
+        Serial.print("CHORD 1: "); Serial.print(along); Serial.println(" cm");
+        step = S_TO_M1;
+      } else if (along > CHORD1_MAX) {
+        Serial.println("CHORD 1 FAILED - matching what it has");
+        step = S_MATCH;
       } else {
-        setWheels(-SWEEP_RATE * 0.6, SWEEP_RATE * 0.6);
+        driveStraight(chordDeg, SEARCH_RATE);
       }
       break;
     }
+
+    case S_TO_M1:
+      // back to the middle of chord 1 (driveTo turns round first)
+      if (driveTo(m1x, m1y)) step = S_FACE_A;
+      break;
+
+    case S_FACE_A:
+      if (faceHeading(chordDeg + 90)) { legStart = travelled; step = S_FIND_A; }
+      break;
+
+    case S_FIND_A: {
+      float along = travelled - legStart;
+      if ((lB || rB) && along > SIDE_MIN) {
+        ax = sensorX(); ay = sensorY();
+        addHit();
+        step = S_FACE_B;
+      } else if (along > SIDE_MAX) {
+        Serial.println("SIDE A FAILED - matching what it has");
+        step = S_MATCH;
+      } else {
+        driveStraight(chordDeg + 90, SEARCH_RATE);
+      }
+      break;
+    }
+
+    case S_FACE_B:
+      if (faceHeading(chordDeg - 90)) { legStart = travelled; step = S_FIND_B; }
+      break;
+
+    case S_FIND_B: {
+      float along = travelled - legStart;
+      if ((lB || rB) && along > CHORD2_MIN) {
+        addHit();
+        Serial.print("CHORD 2: "); Serial.print(along); Serial.println(" cm");
+        step = S_MATCH;
+      } else if (along > CHORD2_MAX) {
+        Serial.println("SIDE B FAILED - matching what it has");
+        step = S_MATCH;
+      } else {
+        driveStraight(chordDeg - 90, SEARCH_RATE);
+      }
+      break;
+    }
+
+    case S_MATCH:
+      setWheels(0, 0);
+      matchToLoop();
+      step = S_FACE_T1;
+      break;
 
     case S_FACE_T1: {
-      float h = rad2deg(atan2(T1_Y - poseY, T1_X - poseX));
-      if (faceHeading(h)) step = S_GO_T1;
+      goalX = T1_X;
+      goalY = T1_Y;
+      float h = rad2deg(atan2(goalY - poseY, goalX - poseX));
+      if (faceHeading(h) || hypot(goalX - poseX, goalY - poseY) < 1.5) step = S_GO_T1;
       break;
     }
 
-    case S_GO_T1: {
-      bool anyBlack = lB || rB;
-      if (anyBlack && !prevAnyBlack && !loopFixed) {
-        loopCorrection(lB, rB);
-        loopFixed = true;
+    case S_GO_T1:
+      if (driveTo(goalX, goalY)) {
+        if (RUN_MODE == 4) {
+          setWheels(0, 0); controlTick(); motorsOff();
+          Serial.println("AT T1 (loop test) - stopped");
+          while (true) delay(1000);
+        }
+        step = S_DROP;
       }
-      prevAnyBlack = anyBlack;
-      if (driveTo(T1_X, T1_Y)) step = S_DROP;
       break;
-    }
 
     case S_DROP: {
       setWheels(0, 0);

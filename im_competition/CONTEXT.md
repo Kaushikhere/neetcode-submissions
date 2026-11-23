@@ -41,8 +41,8 @@ I'm building a robot for the IM Project Competition (Fall 2026). Please use this
 
 ## Other code in the repo
 - Repo: kaushikhere/neetcode-submissions, branch claude/wall-following-ultrasonic-robot-x8l7lw, folder im_competition/
-- mission/mission.ino: APPROACH 1 full run (RUN_MODE 1-3 calibration, 4 position test, 5 to-T1 test, 0 full run). Finds start position by spinning with the right ultrasonic against the 3 start walls, refines on the back wall and nearer side wall, drives to T1 by encoder odometry with a loop-edge correction, drops, follows the line, resets pose at the line end, goes to T2. Not yet tested on the robot; COUNTS_PER_CM and WHEEL_BASE_CM must be calibrated.
-- mission_loop/mission_loop.ino: APPROACH 2 - rough wall sweep only, then two chords across the black loop round T1; the 4 line points are fitted to the loop shape from the map (shift only) to place the robot; servo drop at T1; rest same as mission.ino. Needs the loop to exist on the competition board.
+- approach1_walls/approach1_walls.ino (+ APPROACH_1.md): APPROACH 1 full run (RUN_MODE 1-3 calibration, 4 position test, 5 to-T1 test, 0 full run). Finds start position by spinning with the right ultrasonic against the 3 start walls, refines on the back wall and nearer side wall, drives to T1 by encoder odometry with a loop-edge correction, drops, follows the line, resets pose at the line end, goes to T2. Not yet tested on the robot; COUNTS_PER_CM and WHEEL_BASE_CM must be calibrated.
+- approach2_loop/approach2_loop.ino (+ APPROACH_2.md): APPROACH 2 - rough wall sweep only, then two chords across the black loop round T1; the 4 line points are fitted to the loop shape from the map (shift only) to place the robot; servo drop at T1; rest same as approach 1. Needs the loop to exist on the competition board.
 - battery_check/battery_check.ino, encoder_test/, ir_test/, field_map.h.
 
 ## Lessons / rules for code
