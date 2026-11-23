@@ -6,8 +6,8 @@ Sketch: `approach3_safe.ino` (about 440 lines, less than half of approach 1).
 
 | Team's rule | Kept / changed | Why |
 |---|---|---|
-| FRONT < 9 cm -> move back to 10 cm | Back up until FRONT >= **20 cm**, then turn 35° away | At 10 cm the robot still has no room to turn (it needs ~20 cm lengthwise), so it would hit the wall again straight away. 1 cm between "too close" and "far enough" also makes it jitter back and forth. |
-| RIGHT < 20 cm -> rotate away | Kept, as a steer to the left proportional to how close the wall is | Smooth instead of on/off. |
+| FRONT < 9 cm -> move back to 10 cm | Now FRONT < **12 cm** -> back up until FRONT >= **27 cm**, then turn 35° away | At 10 cm the robot still has no room to turn (it needs ~20 cm lengthwise), so it would hit the wall again straight away. 1 cm between "too close" and "far enough" also makes it jitter back and forth. |
+| RIGHT < 20 cm -> rotate away | Now **27 cm**, as a steer to the left proportional to how close the wall is | Smooth instead of on/off. |
 | RIGHT > 20 cm -> back to the original rotation | Kept: the robot returns to its planned heading | Uses the encoder heading to know what "original" is. |
 | (new) wheels stuck | Motors on but encoders not moving for 0.5 s -> back up and turn | Fixes "stuck at the wall with the wheels still turning". The front sensor misses a wall hit at an angle; the encoders don't. |
 | (new) black border | Black is ignored as a line if a wall is closer than 15 cm ahead, or if the robot is at the board edge | Stops the border being taken for the line. |
@@ -24,7 +24,7 @@ mission.
 3. **Square up**: small sweep with the RIGHT sensor; shortest reading = square to the right wall -> exact heading and x.
 4. **Up the field** (right rule on) until the IRs see the bottom of the black loop -> exact y from the map.
 5. **T1**: turn, drive, servo drop.
-6. **Line**: face right, find the loop, follow the line to its end.
+6. **Line**: go back just below the loop's bottom edge, drive up, and when the IRs see black **rotate clockwise 90°** onto the line; follow it along the bottom, up the right side, to its end.
 7. **T2**: into the pocket, centred with RIGHT, stop with FRONT.
 
 The safety layer is on for every step except the last few cm at T2,

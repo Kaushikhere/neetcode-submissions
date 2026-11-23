@@ -5,17 +5,17 @@
   ==========================================
 
   SAFETY RULES (always on while driving, team's idea, tuned)
-    FRONT < 9 cm   -> back up until FRONT >= 20 cm (room to turn),
+    FRONT < 12 cm  -> back up until FRONT >= 27 cm (room to turn),
                       then turn 35 deg away from the nearer side
-    RIGHT < 20 cm  -> steer left; when RIGHT is back over 20 cm,
+    RIGHT < 27 cm  -> steer left; when RIGHT is back over 27 cm,
                       return to the planned heading
     WHEELS STUCK   -> (motors on but encoders not moving for 0.5 s)
-                      same as FRONT < 9: back up and turn away
+                      same as FRONT < 12: back up and turn away
     BLACK BORDER   -> black is NOT a line if a wall is closer than
                       15 cm ahead, or if the IRs are at the board edge
 
   THE RUN
-    1. ROOM      If a wall is closer than 20 cm ahead, back up.
+    1. ROOM      If a wall is closer than 27 cm ahead, back up.
     2. OPEN SIDE Spin once; the direction with the longest open view
                  ahead (no wall within 80 cm) is up the field.
     3. SQUARE    Small turn left/right reading the RIGHT sensor: it is
@@ -24,7 +24,11 @@
     4. UP        Drive up the field (right rule on) until the IRs see
                  the bottom of the black loop -> exact y from the map.
     5. T1        Turn to T1, drive there, servo drop.
-    6. LINE      Face right, find the loop, follow the line to its end.
+    6. LINE      Go back just below the loop's bottom edge, drive up
+                 to it, and when the IRs see BLACK rotate CLOCKWISE
+                 (turn right) onto the line. From there the line runs
+                 along the bottom, up the right side and on to T2:
+                 follow it to its end.
     7. T2        Into the pocket, centred with RIGHT, stop with FRONT.
     Everything stops at 88 s.
 
@@ -57,9 +61,9 @@ float POINTER_BEYOND_SENSOR_CM = 2.0;
 int SERVO_CLOSED = 0, SERVO_OPEN = 90;
 
 // ---------------- SAFETY ----------------
-float FRONT_STOP_CM = 9;    // closer than this: back up
-float FRONT_ROOM_CM = 20;   // back up until this much room
-float RIGHT_KEEP_CM = 20;   // keep the right wall at least this far
+float FRONT_STOP_CM = 12;   // closer than this: back up
+float FRONT_ROOM_CM = 27;   // back up until this much room
+float RIGHT_KEEP_CM = 27;   // keep the right wall at least this far
 float WALL_SEEN_CM  = 15;   // black with a wall this close = border
 float OPEN_CM       = 80;   // further than this = open field
 
@@ -70,7 +74,15 @@ float POCKET_HEADING = -62.7;
 float POCKET_MOUTH_X = 39.1, POCKET_MOUTH_Y = 202.6;
 float POCKET_CENTRE_TO_RAIL_CM = 19.6;
 float LINE_END_X = 50.5, LINE_END_Y = 202.0, LINE_END_HEADING = -22.0;
-float FORK_AT_CM = 125, LINE_LENGTH_CM = 228;
+float FORK_AT_CM = 125, LINE_LENGTH_CM = 228;  // from where the loop's right side
+float JOIN_X = 97.2;                            // starts (x 97.2, y 97)
+
+// When the IRs find the line: turn this way onto it, by this much.
+// CLOCKWISE (true) = turn right. Coming up from below the loop, turning
+// right leads along the bottom and up the right side towards T2.
+bool  LINE_TURN_CLOCKWISE = true;
+float LINE_TURN_DEG = 90;
+float BELOW_LOOP_CM = 12;       // how far below the loop edge to restart
 // bottom half of the loop round T1 (x increasing)
 const int LB_N = 10;
 float LB_X[LB_N] = { 16.2, 20.6, 28.4, 38.7, 52.1, 65.0, 77.8, 85.9, 91.9, 98.9 };
@@ -108,7 +120,8 @@ float MAX_RATE = 70;
 // ---------------- TYPES (before functions, for the IDE) ----------------
 struct Wheel { float target = 0, rate = 0, integ = 0, duty = 0; int dir = 1; bool brake = true; long last = 0; };
 enum Step { S_ROOM, S_FIND_OPEN, S_SQ_START, S_SQUARE, S_FACE_UP, S_UP, S_FACE_T1, S_GO_T1,
-            S_DROP, S_FACE_LINE, S_FIND_LINE, S_FOLLOW, S_GO_MOUTH, S_FACE_POCKET, S_POCKET, S_DONE };
+            S_DROP, S_BELOW, S_FACE_LINE, S_FIND_LINE, S_ONTO, S_TURN_ONTO, S_FOLLOW,
+            S_GO_MOUTH, S_FACE_POCKET, S_POCKET, S_DONE };
 
 Wheel L, R;
 Servo servo;
@@ -127,6 +140,7 @@ float openBin[72];                     // front reading per 5 deg
 float spun = 0, lastTh = 0;
 float sqTh[120], sqR[120]; int sqN = 0;
 float legStart = 0, whiteFrom = -1, plannedDeg = 90;
+float hitX = 58, preLen = 0, turnToDeg = 0;     // where the loop bottom was met
 
 volatile long rawL = 0, rawR = 0;
 void isrL() { rawL += (digitalRead(ENC_L_A) != digitalRead(ENC_L_B)) ? 1 : -1; }
@@ -240,6 +254,19 @@ float loopBottomY(float sx) {                    // y of the loop's lower edge a
   return -1;
 }
 
+float lenToJoin(float sx) {                      // line length from sx to the right side
+  float len = 0, px = sx, py = loopBottomY(sx);
+  if (py < 0) return 0;
+  for (int i = 0; i < LB_N; i++) {
+    if (LB_X[i] <= sx) continue;
+    float nx = min(LB_X[i], JOIN_X), ny = loopBottomY(nx);
+    len += sqrt((nx - px) * (nx - px) + (ny - py) * (ny - py));
+    px = nx; py = ny;
+    if (nx >= JOIN_X) break;
+  }
+  return len;
+}
+
 // ---------------- SETUP ----------------
 void setup() {
   Serial.begin(115200);
@@ -284,10 +311,13 @@ void loop() {
     wheels(-TURN, TURN); tick(); return;
   }
 
-  // ---- safety layer (not in the last few cm at T2, the wall is the target there)
+  // ---- safety layer. Near T2 (pocket walls all round) only the stuck
+  //      check is used: the walls there are expected, and at the very end
+  //      driving up to the wall is the goal.
   if (escape) { runEscape(f, r); tick(); return; }
   bool drivingForward = L.target > 0 && R.target > 0;
-  if (step != S_POCKET && step != S_DONE && ((drivingForward && f > 0 && f < FRONT_STOP_CM) || stalled())) {
+  bool frontTooClose = drivingForward && f > 0 && f < FRONT_STOP_CM && step < S_GO_MOUTH;
+  if (step < S_POCKET && (frontTooClose || stalled())) {
     startEscape(); tick(); return;
   }
 
@@ -350,7 +380,7 @@ void loop() {
       if (line) {
         float sx = x + IR_FORWARD_CM * cos(th);
         float ly = loopBottomY(sx);
-        if (ly > 0) y = ly - IR_FORWARD_CM * sin(th);
+        if (ly > 0) { y = ly - IR_FORWARD_CM * sin(th); hitX = sx; }
         Serial.print("LOOP EDGE: y set to "); Serial.println(y);
         step = S_FACE_T1;
       } else if (travelled - legStart > 150) { Serial.println("NO LOOP - going on dead reckoning"); step = S_FACE_T1; }
@@ -370,21 +400,44 @@ void loop() {
       wheels(0, 0); tick();
       servo.write(SERVO_OPEN); delay(600); servo.write(SERVO_CLOSED);
       Serial.println("DROPPED AT T1");
-      step = S_FACE_LINE;
+      step = S_BELOW;
       return;
 
+    case S_BELOW: {                               // just below the loop's bottom edge
+      float by = loopBottomY(hitX);
+      if (by < 0) by = 63;
+      if (goTo(hitX, by - BELOW_LOOP_CM)) step = S_FACE_LINE;
+      break;
+    }
+
     case S_FACE_LINE:
-      if (face(0)) { legStart = travelled; step = S_FIND_LINE; }
+      if (face(90)) { legStart = travelled; step = S_FIND_LINE; }
       break;
 
-    case S_FIND_LINE:
-      if (line) { legStart = travelled; whiteFrom = -1; step = S_FOLLOW; Serial.println("ON THE LINE"); }
-      else if (travelled - legStart > 70) { Serial.println("LINE NOT FOUND"); step = S_DONE; }
-      else hold(0, SLOW);
+    case S_FIND_LINE:                             // up to the loop edge
+      if (line) { legStart = travelled; step = S_ONTO; Serial.println("BLACK - turning onto the line"); }
+      else if (travelled - legStart > BELOW_LOOP_CM + 20) { Serial.println("LINE NOT FOUND"); step = S_DONE; }
+      else hold(90, SLOW);
+      break;
+
+    case S_ONTO:                                  // put the turning point on the line
+      if (travelled - legStart >= IR_FORWARD_CM) {
+        turnToDeg = deg(th) + (LINE_TURN_CLOCKWISE ? -LINE_TURN_DEG : LINE_TURN_DEG);
+        step = S_TURN_ONTO;
+      } else hold(90, SLOW * 0.6);
+      break;
+
+    case S_TURN_ONTO:                             // rotate clockwise onto the line
+      if (face(turnToDeg)) {
+        preLen = lenToJoin(x);                    // line from here to the right side
+        legStart = travelled; whiteFrom = -1;
+        Serial.println("ON THE LINE - FOLLOWING");
+        step = S_FOLLOW;
+      }
       break;
 
     case S_FOLLOW: {
-      float along = travelled - legStart;
+      float along = travelled - legStart - preLen;  // measured from the right side
       bool l = lB, rr = rB;
       if (along > FORK_AT_CM - 10 && along < FORK_AT_CM + 20) { if (FORK_IGNORE == 0) rr = false; else l = false; }
       if (l && !rr) wheels(pwmToRate(LBLACK_L), pwmToRate(LBLACK_R));
