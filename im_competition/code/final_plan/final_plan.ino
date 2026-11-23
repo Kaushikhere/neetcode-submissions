@@ -470,8 +470,10 @@ void lineStep(bool l, bool r, float k, bool allowSearch) {
   switch (searchPhase) {
     case 1: if (turned * corr >= SEARCH_DEG) searchPhase = 2; else pivot(corr); break;
     case 2: if (face(deg(searchTh))) searchPhase = 3; break;
-    case 3: if (fwd <= backTo) searchPhase = 4;                         // reverse to the line
-            else wheels(-SEARCH_SPEED, -SEARCH_SPEED); break;
+    case 3:                                       // reverse to where the line was
+      if (fwd <= backTo) searchPhase = 4;
+      else wheels(-SEARCH_SPEED, -SEARCH_SPEED);
+      break;
     case 4: if (-turned * corr >= SEARCH_DEG) searchPhase = 5; else pivot(-corr); break;
     default:
       if (face(deg(searchTh))) {                  // not found: carry on straight
