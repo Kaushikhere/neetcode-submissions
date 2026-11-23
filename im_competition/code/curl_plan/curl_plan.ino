@@ -74,9 +74,8 @@
 // ===================== RUN MODE =====================
 int RUN_MODE = 0;
 
-// ===================== CALIBRATION (modes 1 and 2) =====================
-// These matter for the spin, the T1 hop and every turn. 12 / 15 are only
-// placeholders - measure them with modes 1 and 2.
+// ===================== CALIBRATION =====================
+// Your mode 1 numbers. Stage 0 checks the scale itself at every start.
 float COUNTS_PER_CM_L = 140.98; // your mode 1 result (stage 0 checks it)
 float COUNTS_PER_CM_R = 105.20; // your mode 1 result - the encoders differ by ~34%
 float WHEEL_BASE_CM   = 15.0;   // wheel centre to wheel centre
@@ -164,7 +163,7 @@ const char* NAMES[] = { "0 SCALE CHECK", "1 SPIN", "1 FACE OPEN", "2 TO CURL", "
 
 // ===================== STATE =====================
 Wheel L, R;
-Step step = S_SPIN;
+Step step = S_SCALE;
 float x = 0, y = 0, th = 0;          // odometry (cm, rad); the field frame from stage 1
 float fwd = 0;                       // signed distance driven
 float legStart = 0, legTh = 0;       // fwd / th when the step began
@@ -446,7 +445,6 @@ void loop() {
   }
 
   switch (step) {
-    // ================= STAGE 1: FIND THE OPEN SIDE =================
     // ================= STAGE 0: SCALE CHECK =================
     case S_SCALE:
       if (scPh == 0 || scPh == 2) {               // stopped: 5 steady front echoes
@@ -486,6 +484,7 @@ void loop() {
       }
       break;
 
+    // ================= STAGE 1: FIND THE OPEN SIDE =================
     case S_SPIN: {                                  // one spin: no echo / far echo = open
       int b = ((int)lround(deg(th) / 10) % 36 + 36) % 36;
       if (f < 0 || f > OPEN_CM) spinOpen[b] = true;
