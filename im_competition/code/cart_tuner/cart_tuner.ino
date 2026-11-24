@@ -57,14 +57,14 @@ const uint8_t PIN_TRIG_L = 18, PIN_ECHO_L = 19;           // LEFT ultrasonic (ne
 // --- wiring polarity (all 0 or 1) -----------------------------------
 int INVERT_PWM     = 1;   // 1 = optocoupler inverts the enable pin (Pico LOW = L298N HIGH)
 int INVERT_DIR     = 1;   // 1 = optocoupler inverts IN1..IN4
-int LEFT_FWD_SWAP  = 0;   // 1 = the LEFT motor runs backwards on "forward"
+int LEFT_FWD_SWAP  = 1;   // 1 = the LEFT motor runs backwards on "forward"
 int RIGHT_FWD_SWAP = 0;   // 1 = the RIGHT motor runs backwards on "forward"
 int ENC_L_INVERT   = 0;   // 1 = flip the LEFT encoder sign  (forward must count UP)
 int ENC_R_INVERT   = 1;   // 1 = flip the RIGHT encoder sign (forward must count UP)
  
 // --- enable pin behaviour -------------------------------------------
 int USE_PWM       = 1;    // 1 = speed control by PWM; 0 = enable is plain on/off, full speed
-int PWM_FREQ_HZ   = 1000; // core default. Lower to ~100 if the optocoupler cannot follow
+int PWM_FREQ_HZ   = 500;  // core default. Lower to ~100 if the optocoupler cannot follow
 int BRAKE_ON_STOP = 1;    // 1 = stopping drives both direction pins low (brake)
  
 // --- encoder and geometry -------------------------------------------
