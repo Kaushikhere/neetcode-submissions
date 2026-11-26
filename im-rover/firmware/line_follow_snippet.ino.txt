@@ -1,0 +1,185 @@
+// ============================================================================
+// 10. LINE FOLLOW (T1 -> line -> passage -> hairpin -> T2)
+//     Paste this BELOW loop(). Uses only the Task 1 helpers above.
+// ============================================================================
+const int   IR_L_PIN        = 16;      // left IR  (straddles the line)
+const int   IR_R_PIN        = 17;      // right IR
+const int   IR_BLACK        = HIGH;    // what the IR reads over black ('i' to check; set LOW if reversed)
+
+// --- practice-field route (cm of line from the pickup point, measured at the IRs) ---
+const float CAP_MIN_CM      = 13.0f;   // pickup: black only counts between 13..32 cm (decoys ignored)
+const float CAP_MAX_CM      = 32.0f;
+const float LINE_PICKUP_HDG = 74.0f;   // line direction at pickup (deg, 0 = facing right wall, 90 = up-field)
+const float RT_OVAL_END     = 17.0f;   // oval's loose end ~9 cm LEFT of the line   -> ignore LEFT IR
+const float RT_PASSAGE_IN   = 62.0f;   // passage ladder <-> T-wall                  -> slow + wall centring
+const float RT_BRANCH       = 120.0f;  // branch to the RIGHT toward the T-wall      -> ignore RIGHT IR
+const float RT_PASSAGE_OUT  = 125.0f;
+const float RT_TOP          = 138.0f;
+const float RT_HAIRPIN      = 188.0f;  // vertex: line doubles back LEFT            -> scripted pivot
+const float RT_END          = 220.0f;  // end of line, ladder ahead
+const float LINE_MAX_ROUTE  = 245.0f;
+
+const int   LF_BASE_PWM     = 150;
+const int   LF_SLOW_PWM     = 132;
+const int   LF_OUTER_ADD    = 30;      // outer wheel boost when correcting
+const unsigned long LF_HOLD_MS = 70;   // keep turning after the sensor clears (sharp bends)
+const float WALL_KP         = 6.0f;    // PWM per cm of (LEFT-RIGHT) in the passage
+const float WALL_MAX_CM     = 15.0f;
+const float HAIRPIN_PRE_CM  = 8.0f;
+const float HAIRPIN_TURN    = 124.0f;  // pivot LEFT at the hairpin
+const float LINE_END_FRONT  = 20.0f;   // FRONT when the IRs reach the line end ('k' to teach)
+const float T2_TURN         = -52.0f;  // from the last leg to facing the upper rung square-on
+const float T2_FRONT_TARGET = 5.0f;    // FRONT with the pointer on T2 ('k' to teach)
+
+float g_backHdg = NAN;                 // encoder heading that faces the back wall (set in Phase 3)
+
+bool irBlack(int pin) { return digitalRead(pin) == IR_BLACK; }
+
+// encoder heading for a field heading (0 = right wall, 90 = up-field, -90 = back wall)
+float encForField(float fieldDeg) {
+  float cur = getHeadingDeg();
+  return cur + wrapAngle180((g_backHdg + 90.0f + fieldDeg) - cur);
+}
+
+// one wheel per sign: + forward, - reverse, 0 stop (RIGHT_FF applied)
+void lfDrive(int lp, int rp) {
+  setLeftDir(lp > 0 ? 1 : (lp < 0 ? -1 : 0));
+  setRightDir(rp > 0 ? 1 : (rp < 0 ? -1 : 0));
+  setMotorPWM(abs(lp), (int)roundf((float)abs(rp) * RIGHT_FF));
+}
+
+float cmSince(long l0, long r0) {
+  long l, r; readEncoders(l, r);
+  return 0.5f * ((float)(l - l0) / TICKS_PER_CM_L + (float)(r - r0) / TICKS_PER_CM_R);
+}
+
+// ---- pick up the line: face the right wall, creep until an IR sees black in the window ----
+bool pickUpLine() {
+  Serial.println(F("--- PICK UP LINE ---"));
+  turnToHeading(encForField(0.0f), true);
+  long l0, r0; readEncoders(l0, r0);
+  setLeftDir(1); setRightDir(1);
+  bool found = false;
+  unsigned long t0 = millis();
+  while (!timeUp() && millis() - t0 < 6000UL) {
+    float d = cmSince(l0, r0);
+    if (d >= CAP_MIN_CM && (irBlack(IR_L_PIN) || irBlack(IR_R_PIN))) { found = true; break; }
+    if (d >= CAP_MAX_CM) break;
+    long l, r; readEncoders(l, r);
+    float corr = constrain(DRIVE_SYNC_KP * (float)((r - r0) - (l - l0)), -DRIVE_MAX_CORR, DRIVE_MAX_CORR);
+    setMotorPWM(constrain((int)roundf(DRIVE_SLOW_PWM + corr), 90, 245),
+                constrain((int)roundf(DRIVE_SLOW_PWM * RIGHT_FF - corr), 80, 240));
+    delay(5);
+  }
+  stopMotors();
+  Serial.print(found ? F("  line found at ") : F("  no line, using distance: "));
+  Serial.println(cmSince(l0, r0), 1);
+  driveStraightCm(FRONT_OFFSET_CM - 1.0f, false);       // axle over the line
+  turnToHeading(encForField(LINE_PICKUP_HDG), true);    // IRs now straddle it
+  return found;
+}
+
+// ---- follow the line with the route table ----
+float followLine() {
+  Serial.println(F("--- FOLLOW LINE ---"));
+  long l0, r0; readEncoders(l0, r0);
+  int holdSide = 0;
+  unsigned long holdUntil = 0, lastSonar = 0, lastFront = 0;
+  bool hairpinDone = false, pingLeft = true;
+  float sideL = 250.0f, sideR = 250.0f, junctionEnd = -1.0f, route = 0.0f;
+  float hHold = getHeadingDeg();
+
+  while (!timeUp()) {
+    float along = cmSince(l0, r0);
+    route = along + FRONT_OFFSET_CM;                   // IRs are at the front
+    unsigned long now = millis();
+    if (route >= LINE_MAX_ROUTE) break;
+
+    // end of line: ladder in front
+    if (route >= RT_END - 15.0f && now - lastFront >= 60UL) {
+      lastFront = now;
+      if (readUltrasonicSingle(F_TRIG, F_ECHO, 3000UL) <= LINE_END_FRONT) break;
+    }
+
+    // hairpin: drive on a bit, pivot left (back off once if it hits the ladder)
+    if (!hairpinDone && route >= RT_HAIRPIN) {
+      hairpinDone = true;
+      Serial.println(F("  hairpin"));
+      stopMotors();
+      driveStraightCm(HAIRPIN_PRE_CM, false);
+      float h0 = getHeadingDeg();
+      if (!pivotRelative(HAIRPIN_TURN, true)) { driveStraightCm(-4.0f, false); turnToHeading(h0 + HAIRPIN_TURN, true); }
+      hHold = getHeadingDeg(); holdUntil = 0; junctionEnd = -1.0f;
+      continue;
+    }
+
+    bool ignL   = (route > RT_OVAL_END - 12.0f && route < RT_OVAL_END + 13.0f);
+    bool ignR   = (route > RT_BRANCH - 10.0f && route < RT_BRANCH + 15.0f);
+    bool inPass = (route > RT_PASSAGE_IN - 5.0f && route < RT_PASSAGE_OUT);
+    bool slow   = inPass || route > RT_TOP + 10.0f;
+    int  base   = slow ? LF_SLOW_PWM : LF_BASE_PWM;
+
+    // passage: alternate short LEFT/RIGHT pings (1.8 ms timeout so the loop never stalls)
+    if (inPass && now - lastSonar >= 25UL) {
+      lastSonar = now;
+      if (pingLeft) sideL = readUltrasonicSingle(L_TRIG, L_ECHO, 1800UL);
+      else          sideR = readUltrasonicSingle(R_TRIG, R_ECHO, 1800UL);
+      pingLeft = !pingLeft;
+    }
+
+    bool bl = irBlack(IR_L_PIN) && !ignL;
+    bool br = irBlack(IR_R_PIN) && !ignR;
+
+    // crossing a decoy (both black): hold heading straight for 4 cm
+    if (along < junctionEnd) {
+      int c = (int)constrain((hHold - getHeadingDeg()) * 4.0f, -40.0f, 40.0f);
+      lfDrive(base - c, base + c);
+      continue;
+    }
+    if (bl && br) { junctionEnd = along + 4.0f; hHold = getHeadingDeg(); continue; }
+
+    if (bl)      { holdSide = -1; holdUntil = now + LF_HOLD_MS; }
+    else if (br) { holdSide =  1; holdUntil = now + LF_HOLD_MS; }
+    int steer = bl ? -1 : (br ? 1 : (now < holdUntil ? holdSide : 0));
+
+    if (steer < 0)      lfDrive(0, base + LF_OUTER_ADD);          // line under LEFT IR -> turn left
+    else if (steer > 0) lfDrive(base + LF_OUTER_ADD, 0);          // line under RIGHT IR -> turn right
+    else if (inPass && sideL < WALL_MAX_CM && sideR < WALL_MAX_CM) {
+      int c = (int)constrain(WALL_KP * (sideL - sideR), -35.0f, 35.0f);   // centre between the walls
+      lfDrive(base - c, base + c);
+    } else {
+      lfDrive(base, base);
+    }
+    hHold = getHeadingDeg();
+    delay(2);
+  }
+  stopMotors();
+  Serial.print(F("  line ended at route ")); Serial.print(route, 1);
+  Serial.print(F(" (map: ")); Serial.print(RT_END, 0); Serial.println(F(")"));
+  return route;
+}
+
+// ---- T2: face the upper rung square-on, creep to the taught FRONT ----
+void approachT2() {
+  Serial.println(F("--- T2 ---"));
+  pivotRelative(T2_TURN, true);
+  for (int k = 0; k < 6 && !timeUp(); k++) {
+    float dF = readUltrasonicMedian(F_TRIG, F_ECHO, 5);
+    if (dF > 200.0f) { driveStraightCm(3.0f, false); continue; }
+    float e = dF - T2_FRONT_TARGET;
+    Serial.print(F("  FRONT=")); Serial.println(dF, 1);
+    if (fabsf(e) < 0.5f) break;
+    driveStraightCm(constrain(e, -10.0f, 30.0f), false);
+  }
+  stopMotors();
+  Serial.println(F(">>> AT T2 <<<"));
+}
+
+// ---- call this after the drop at T1 ----
+void lineToT2() {
+  if (isnan(g_backHdg)) g_backHdg = getHeadingDeg() - 180.0f;   // test mode: robot placed on T1 facing up-field
+  pickUpLine();
+  followLine();
+  approachT2();
+  releaseMotors();
+}
