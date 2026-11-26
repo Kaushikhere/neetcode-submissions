@@ -9,7 +9,10 @@
     3. LEFT and RIGHT now hit the side walls square, so they give the true position across the box.
     4. Slide sideways under T1 (out 22 cm, turn, range FRONT to a side wall, turn back) and square again.
     5. One straight encoder drive up-field to T1. No turn after the last squaring. Drop.
-    6. Turn onto the line, follow it, stop at T2 by the FRONT reading taught with the pointer on T2.
+    6. Face the right wall and drive to the oval's right side (black only accepted where it must be),
+     turn onto it and follow the route: a table keyed to encoder distance ignores the oval's loose end
+     and the branch, slows in the passage and makes the hairpin as a scripted pivot.
+  7. At the end of the line, turn to face the upper rung and stop at the FRONT reading taught on T2.
 
   Board : Raspberry Pi Pico, Arduino IDE with the arduino-pico core (Earle Philhower).
   Cores : core 0 = motion control (100 Hz), core 1 = the three HC-SR04s, round robin, 30 ms apart.
@@ -24,13 +27,12 @@
 #include <Servo.h>
 #include <pico/time.h>
 #include <hardware/gpio.h>
+#include "field_map.h"      // the practice field in cm: walls, T1, T2, line route, start marks
 
 // =====================================================================================
 // 1. FIELD AND TARGETS  (measure these on the practice field)
 // =====================================================================================
-const float BOX_W            = 122.0;  // side wall to side wall, inner faces
-const float T1_X             = 64.0;   // T1 centre from the LEFT wall   (sketch estimate: MEASURE)
-const float T1_Y             = 93.0;   // T1 centre from the BACK wall   (sketch estimate: MEASURE)
+// BOX_W, T1_X, T1_Y, T2 and the line route live in field_map.h
 const float SUM_TARGET       = 98.7;   // LEFT+RIGHT when square to the side walls (you measured 98.7)
 const float SUM_TOL          = 4.0;    // band used while spinning
 const float FRONT_BACK_MAX   = 40.0;   // facing the back wall, FRONT is below this (start region ~44 cm deep)
@@ -89,19 +91,34 @@ const bool  FAST_MODE        = false;  // true: skip the slide; one small angled
 // 4. LINE AND T2  (measure on the practice field; 't' teaches T2)
 // =====================================================================================
 const int   IR_BLACK_LEVEL     = HIGH;  // what digitalRead gives over black. Check in the 'm' monitor.
-const float LINE_CAPTURE_HDG   = 0;     // field heading to face after the drop (0 = facing the right wall)
-const float LINE_CAPTURE_FWD   = 0;     // cm to drive after that turn, before following
+const float CAPTURE_MIN_CM      = 14;    // black is only accepted between these distances after facing right
+const float CAPTURE_MAX_CM      = 32;    //   (oval's right side expected ~22 cm out; anything else is a decoy)
 const float LINE_V             = 14;    // cm/s on the easy part
-const float LINE_V_SLOW        = 7;     // cm/s after LINE_SLOW_FROM
+const float LINE_V_SLOW        = 7;     // cm/s in SLOW route sections
 const float LINE_STEER         = 1.1;   // steering: wheel speed difference as a multiple of speed
 const int   TURN_HOLD_MS       = 70;    // keep turning this long after the sensor clears (sharp corners)
-const float JUNCTION_CM        = 4;     // both sensors black (crossing or decoy): hold heading this far
-const float LINE_SLOW_FROM     = 150;   // cm along the line where the zigzag starts
-const float LINE_T2_ZONE       = 220;   // cm along the line after which FRONT may end the follow
-const float LINE_MAX           = 330;   // safety: stop following after this many cm
-const float T2_TURN_DEG        = 0;     // extra turn at the end of the line to face the T2 wall
-const float T2_FRONT_TARGET    = 6.0;   // FRONT with the pointer held on T2 ('t' teach)
-const float T2_SLOW_MARGIN     = 8.0;   // leave the line this far before the target, then creep
+const float JUNCTION_CM        = 4;     // both sensors black (crossing): hold heading this far
+const float LINE_MAX_ROUTE     = 245;   // safety: stop following after this route distance
+const float LINE_END_FRONT     = 20;    // FRONT reading when the IRs reach the line's end ('t' there)
+const float T2_TURN_DEG        = RUNG_NORMAL_HDG - LINE_END_HDG;   // -52: turn to face the rung
+const float T2_FRONT_TARGET    = 5.0;   // FRONT with the pointer held on T2 ('t' teach)
+
+// route table: positions are cm of line from the pickup point, measured at the IR sensors
+// (= encoder distance + AXLE_TO_FRONT). The print-out at the end of a run shows the real numbers.
+enum RouteAct : uint8_t { IGNORE_LEFT, IGNORE_RIGHT, SLOW, SCRIPT_TURN };
+struct RouteRule { float from, to; RouteAct act; float preCm, turnDeg; };
+const RouteRule ROUTE[] = {
+  { RT_OVAL_END - 12, RT_OVAL_END + 13, IGNORE_LEFT,  0, 0 },  // oval's loose end ~9 cm left of the line
+  { RT_PASSAGE_IN,    RT_PASSAGE_OUT,   SLOW,         0, 0 },  // narrow passage
+  { RT_BRANCH - 10,   RT_BRANCH + 15,   IGNORE_RIGHT, 0, 0 },  // branch to the T-wall (decoy)
+  { RT_TOP + 10,      RT_END + 20,      SLOW,         0, 0 },  // top curve, hairpin, last leg
+  // hairpin: when the IRs reach the vertex, drive 8 cm on, pivot 124 deg left. The IRs land on the
+  // return leg ~24 cm past the vertex, 19 deg off its direction, and the follower takes it from there.
+  // CHECK on the field that the pivot clears the top of the ladder's left panel; if it stalls the
+  // code backs off 4 cm and finishes the turn.
+  { RT_HAIRPIN,       RT_HAIRPIN + 1,   SCRIPT_TURN,  8, 124 },
+};
+const int N_ROUTE = sizeof(ROUTE) / sizeof(ROUTE[0]);
 
 // =====================================================================================
 // 5. PINS
@@ -398,7 +415,15 @@ Sig scanForSignature() {
     setWheels(-v, v);
     float h = hdgDeg(); turned += fabsf(h - lastH); lastH = h;
     if (stalled(300) || nz(sonarVal[S_F]) < 5) {          // blocked: a corner touched something
-      stopAll(); blocks++; runN = 0;
+      stopAll();
+      if (runN >= 2) {                                      // blocked inside a pattern: good enough,
+        out.found = true; out.back = runCls == 1;           // squaring fixes the heading anyway
+        out.center = 0.5f * (runA + runB); out.L = runL; out.R = runR; out.F = runF;
+        Serial.println("  pattern (cut short by a wall)");
+        return out;
+      }
+      if (turned < 30 && flips == 0) { dir = -dir; flips++; resetStall(); lastH = hdgDeg(); continue; }  // spin the other way
+      blocks++; runN = 0;
       turnBy(openHdg - hdgDeg());                          // back to the most open heading (already swept)
       float f = sonarMedian(S_F, 3), go = isnan(f) ? 12 : constrain(f - 20, -6.0f, 12.0f);
       if (fabsf(go) > 1) driveStraight(go, V_SLOW);
@@ -454,6 +479,11 @@ bool localiseAndSquare() {
         turnBy(nz(s.R) < nz(s.L) ? 180 : -180);
       }
     }
+    // hugging a side wall? step ~5 cm away first, or the reverse scrapes the wall and that side sonar
+    // sits under its 2.5 cm minimum range
+    float Ls = sonarMedian(S_L, 3), Rs = sonarMedian(S_R, 3);
+    int side = (!isnan(Ls) && Ls < 6) ? -1 : (!isnan(Rs) && Rs < 6) ? 1 : 0;
+    if (side) { float a = side < 0 ? -25 : 25; turnBy(a); driveStraight(12, V_SLOW); turnBy(-a); }
     if (!squareBack(60)) { driveStraight(8, V_SLOW); continue; }
     float L = sonarMedian(S_L, 3), R = sonarMedian(S_R, 3), F = sonarMedian(S_F, 3);
     bool ok = !isnan(L) && !isnan(R) && fabsf(L + R - SUM_TARGET) < SUM_TOL && (isnan(F) || F >= FRONT_UP_MIN);
@@ -483,17 +513,60 @@ void deployPointer() {
 
 bool irBlack(int pin) { return pin >= 0 && digitalRead(pin) == IR_BLACK_LEVEL; }
 
+bool driveUntilBlack(float minCm, float maxCm, float v) {   // heading hold; black only counts in the window
+  float s0 = avgCm(), h0 = hdgDeg();
+  resetStall();
+  while (true) {
+    if (!tick()) continue;
+    float d = avgCm() - s0;
+    if (d >= minCm && (irBlack(IR_L) || irBlack(IR_R))) { stopAll(); Serial.printf("  line found at %.1f cm\n", d); return true; }
+    if (d >= maxCm || stalled(400)) { stopAll(); Serial.printf("  no line by %.1f cm\n", d); return false; }
+    float e = h0 - hdgDeg(); setWheels(v - KP_HDG * e, v + KP_HDG * e);
+  }
+}
+
+bool pickUpLine() {                             // from T1: the oval's right side is straight to the right
+  turnToWorld(0);
+  bool ok = driveUntilBlack(CAPTURE_MIN_CM, CAPTURE_MAX_CM, V_SLOW);
+  driveStraight(AXLE_TO_FRONT - 1.0f, V_SLOW);  // roll on until the axle is over the line
+  turnToWorld(LINE_PICKUP_HDG);                 // line direction there: the IRs now straddle it
+  return ok;
+}
+
 float followLine() {
   float s0 = avgCm(), hHold = hdgDeg(), junctionEnd = -1;
   int lastSide = 0, holdSide = 0; uint32_t holdUntil = 0;
+  bool scriptDone[N_ROUTE] = {false};
+  float route = 0;
   while (true) {
     if (!tick()) continue;
     float along = avgCm() - s0;
-    if (along >= LINE_MAX) break;
+    route = along + AXLE_TO_FRONT;              // where the IR sensors are along the route
+    if (route >= LINE_MAX_ROUTE) break;
     float F = sonarVal[S_F];
-    if (along >= LINE_T2_ZONE && !isnan(F) && F <= T2_FRONT_TARGET + T2_SLOW_MARGIN) break;
-    float v = along >= LINE_SLOW_FROM ? LINE_V_SLOW : LINE_V;
-    bool l = irBlack(IR_L), r = irBlack(IR_R);
+    if (route >= RT_END - 15 && !isnan(F) && F <= LINE_END_FRONT) break;   // end of the line: ladder ahead
+    bool ignL = false, ignR = false, slow = false;
+    for (int i = 0; i < N_ROUTE; i++) {
+      const RouteRule &r = ROUTE[i];
+      if (route < r.from || route > r.to) continue;
+      if (r.act == IGNORE_LEFT) ignL = true;
+      else if (r.act == IGNORE_RIGHT) ignR = true;
+      else if (r.act == SLOW) slow = true;
+      else if (r.act == SCRIPT_TURN && !scriptDone[i]) {
+        scriptDone[i] = true;
+        stopAll();
+        if (r.preCm != 0) driveStraight(r.preCm, V_SLOW);
+        float hBefore = hdgDeg();
+        if (!turnBy(r.turnDeg)) {               // stalled on a wall: back off and finish the turn
+          driveStraight(-4, V_SLOW);
+          turnBy(r.turnDeg - (hdgDeg() - hBefore));
+        }
+        hHold = hdgDeg(); holdUntil = 0; junctionEnd = -1;
+        Serial.printf("  scripted turn at route %.1f\n", route);
+      }
+    }
+    float v = slow ? LINE_V_SLOW : LINE_V;
+    bool l = irBlack(IR_L) && !ignL, r = irBlack(IR_R) && !ignR;
     if (along < junctionEnd) {                   // crossing a decoy or junction: hold heading
       float e = hHold - hdgDeg(); setWheels(v - KP_HDG * e, v + KP_HDG * e); continue;
     }
@@ -507,11 +580,11 @@ float followLine() {
     if (steer < 0) setWheels(v - s, v + s);       // line under the LEFT sensor: turn left
     else if (steer > 0) setWheels(v + s, v - s);
     else setWheels(v, v);
+    hHold = hdgDeg();
   }
   stopAll();
-  float along = avgCm() - s0;
-  Serial.printf("  line followed for %.1f cm\n", along);
-  return along;
+  Serial.printf("  line followed to route %.1f cm (map says the end is at %.0f)\n", route, RT_END);
+  return route;
 }
 
 void approachT2() {
@@ -557,9 +630,9 @@ void runCompetition() {
   waitMs(300);
   dropItem();
 
-  mark("line");
-  turnToWorld(LINE_CAPTURE_HDG);
-  if (LINE_CAPTURE_FWD != 0) driveStraight(LINE_CAPTURE_FWD, V_SLOW);
+  mark("pick up the line");
+  pickUpLine();
+  mark("follow the route");
   followLine();
   mark("T2");
   approachT2();

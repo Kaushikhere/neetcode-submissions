@@ -9,7 +9,7 @@
   --bg:#EDF0EB; --panel:#FFFFFF; --ink:#17211B; --muted:#58655C; --rule:#D2D8D0; --chip:#E3E8E1;
   --ours:#2357C4; --friend:#D4642A; --fix:#8A7300;
   --t1:#D41E78; --t2:#6A3CC6;
-  --board:#E8D8B4; --black:#161616; --wall:#2D8A55; --wall-low:#3F7A58; --robot:#2E3A44; --robot-hi:#4A5966;
+  --board:#E9E8E2; --black:#161616; --wall:#2D8A55; --wall-low:#3F7A58; --robot:#2E3A44; --robot-hi:#4A5966;
   --display:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
   --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
   --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
@@ -95,7 +95,7 @@ td .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-rig
 
 <div class="wrap">
   <header>
-    <div class="eyebrow">IM Competition I · start box → T1 → line → T2</div>
+    <div class="eyebrow">IM Competition I · practice field · start box → T1 → line → T2</div>
     <h1>T1 Run Simulator</h1>
     <p class="lede">Watch two ways to get from a random start to T1. <b>Your friend's method</b> spins until LEFT + RIGHT = 99, homes to a fixed spot and replays a tuned path. <b>Our method</b> lets the 30 cm back wall set the heading by reversing into it, measures across the box with both side sensors, and finishes with one straight drive. The ultrasonic model behaves like a real HC‑SR04: inside its beam it reads the nearest point of a flat wall, so near “straight” the readings stop changing.</p>
   </header>
@@ -110,7 +110,7 @@ td .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-rig
         <span><i class="sw" style="background:var(--t2)"></i>T2</span>
         <span><i class="sw" style="background:var(--black)"></i>line and decoys</span>
       </div>
-      <p class="cap">Inner walls, line and T2 are traced from the official sketch, which is not to scale. Use your own T1 numbers below.</p>
+      <p class="cap">Map traced from your practice-field photos: start box walls (back + two ~60 cm sides), ladder, T‑wall, line, decoys, start marks 1–6. Positions are good to a few cm; T2's spot is an estimate.</p>
     </div>
 
     <div class="panel">
@@ -125,6 +125,9 @@ td .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-rig
           <button class="btn" id="newstart" type="button">New random start</button>
           <label for="speed">Speed
             <select id="speed"><option value="1">1×</option><option value="2" selected>2×</option><option value="5">4×</option><option value="14">10×</option></select>
+          </label>
+          <label for="startSel">Start
+            <select id="startSel"><option value="0">Random</option><option value="1">Mark 1</option><option value="2">Mark 2</option><option value="3">Mark 3</option><option value="4">Mark 4</option><option value="5">Mark 5</option><option value="6">Mark 6</option></select>
           </label>
           <label for="beams"><input type="checkbox" id="beams" checked> Sonar beams</label>
         </div>
@@ -195,11 +198,11 @@ td .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-rig
   <section class="card" aria-label="Settings">
     <div class="eyebrow">Your field</div>
     <div class="row">
-      <label for="t1x">T1 x (cm from left wall) <input type="number" id="t1x" value="64" min="25" max="97" step="0.5"></label>
-      <label for="t1y">T1 y (cm from back wall) <input type="number" id="t1y" value="93" min="60" max="140" step="0.5"></label>
+      <label for="t1x">T1 x (cm from left wall) <input type="number" id="t1x" value="57.1" min="25" max="97" step="0.5"></label>
+      <label for="t1y">T1 y (cm from back wall) <input type="number" id="t1y" value="96.9" min="60" max="140" step="0.5"></label>
       <button class="btn" id="apply" type="button">Apply and rerun</button>
     </div>
-    <p class="note">Defaults come from the official sketch. Measure T1 on the practice field (centre of the target, from the inner face of the left wall and of the back wall) and enter it here; the same two numbers go into the firmware.</p>
+    <p class="note">Defaults come from the photo of the practice field (T1 = the green ring). Measure T1 on the practice field (centre of the target, from the inner face of the left wall and of the back wall) and enter it here; the same two numbers go into the firmware.</p>
   </section>
 </div>
 
@@ -209,14 +212,19 @@ td .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-rig
 const D2R=Math.PI/180, R2D=180/Math.PI;
 const wrap=a=>{a=(a+Math.PI)%(2*Math.PI); if(a<0)a+=2*Math.PI; return a-Math.PI;};
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-const CFG={T1x:64,T1y:93,side:58,dash:44};
+const CFG={T1x:57.1,T1y:96.9,side:60,dash:52};
 // robot geometry, cm, measured from the axle midpoint (rear drive wheels, caster at the front)
 const RB={rear:4.5,front:17.5,half:10.65,body:8.0,sideFwd:10.5,sideLat:11.5,ptr:3,irLat:4.5};
 const SUM0=122-2*RB.sideLat; // 99, matches the measured 98.7
-const INNER=[[43.2,200.2,79.5,148.4],[30.1,150.9,55.2,113.2],[17.8,135.8,30.1,150.9],[65.7,167.3,42.9,132.3],[72.8,158.4,48.2,122.7],[75.2,210.3,98.4,176.1],[87.2,192.9,100.4,212.5]];
-const LINE=[[71.7,93.1],[80.2,95.1],[90.7,98.6],[97.7,103.1],[102.1,110.7],[103.4,125.8],[103.0,138.3],[100.4,148.4],[94.2,157.2],[87.2,171.0],[76.6,188.6],[66.1,206.2],[59.1,218.8],[55.6,223.8],[48.5,226.4],[39.7,229.4],[34.5,214.3],[28.8,224.6],[19.0,216.3],[25.0,204.2],[28.8,190.6],[37.6,197.9],[30.6,181.6],[44.7,186.6],[38.3,165.5],[52.0,178.1],[43.6,154.7]];
-const DECOYS=[[[14,72],[30,86],[24,104],[12,118]],[[82,140],[94,112]],[[40,60],[52,74],[48,92]],[[108,64],[112,90],[106,104]]];
-const T2={x:54.1,y:150.9};
+// traced from the practice-field photos (homography on the white area's corners). Walls are 15 cm panels.
+const INNER=[[19.5,198.6,46.6,140.2],[56.8,219.3,83.7,156.3],[16.2,173.6,68.0,192.6],[42.2,155.9,79.0,175.4],[86.1,227.8,103.6,181.3],[97.5,209.3,108.3,218.1]];
+// the whole painted line: oval around T1 (loose end inside), up the right side, through the passage, hairpin, end near T2
+const LINE_ALL=[[91.9,114.7],[78.8,119.9],[63.9,123.5],[48.7,124.8],[33.6,123.6],[22.6,120.2],[16.7,114.4],[15.5,106.6],[17.6,93.9],[21.4,84.0],[26.6,76.4],[34.8,69.2],[44.9,64.8],[56.2,63.1],[67.3,63.6],[77.0,66.5],[84.6,72.7],[91.1,83.8],[96.5,97.8],[100.3,110.6],[103.1,124.4],[103.9,139.3],[102.2,152.6],[96.9,163.9],[89.4,177.4],[81.4,195.1],[73.8,210.7],[68.1,221.7],[64.6,225.5],[51.6,221.9],[35.4,214.8],[17.2,209.7],[31.5,204.2],[47.7,198.9]];
+const LINE=LINE_ALL.slice(18);   // the route the robot follows: picked up on the oval's right side
+const DECOYS=[[[13.1,158.9],[22.6,146.5],[32.0,130.9]],[[61.7,155.7],[65.8,140.9],[69.2,127.0]],[[70.9,210.7],[77.6,223.4],[87.3,228.9],[97.0,230.7],[103.7,224.9],[104.4,219.3]]];
+const T2={x:49.0,y:188.5};       // estimate: up-field face of the upper rung, by the clip, just past the line's end
+// practice start marks 1-6: dot = axle centre, long leg = facing direction (flip if your marks mean the opposite)
+const MARKS=[[13.7,45.3,-50],[46.1,34.0,40],[56.3,19.2,88],[75.7,48.9,-123],[85.4,34.1,-2],[105.6,16.2,136]];
 const FHOME=110; // friend's home: FRONT = 110 (user's number)
 const VIRTUAL={a:{x:30,y:30+RB.front+FHOME},b:{x:100,y:30+RB.front+FHOME}}; // assumed flat far wall for the friend's last homing step
 
@@ -336,7 +344,12 @@ function* scanForSignature(st){
   st.scan=[]; st.scanMark=null;
   while(total<720){
     const r=yield* rotate(st,2.5*dir,{rate:60});
-    if(r.blocked){ blocks++; run=[];
+    if(r.blocked){
+      if(run.length>=2){ const a=run[0], b=run[run.length-1], mid=run[run.length>>1];   // blocked inside a pattern: good enough,
+        st.scanMark=a.h+wrap(b.h-a.h)/2;                                                  // squaring will fix the heading
+        return {type:a.cls,center:a.odo+wrap(b.odo-a.odo)/2,L:mid.L,R:mid.R,F:mid.F}; }
+      blocks++; run=[];
+      if(total<30&&flips===0){ dir=-dir; flips++; blocks=0; continue; }   // blocked right away: just spin the other way
       // escape: turn back to the most open heading seen so far, drive into that space, keep scanning
       yield* rotate(st,R2D*wrap(open.odo-st.odoH));
       const f=read(st,'F',3), go=f===null?12:clamp(f-20,-6,12);
@@ -365,6 +378,9 @@ function* runOurs(st){
     if(sig){ yield* rotate(st,R2D*wrap(sig.center-st.odoH));
       if(sig.type==='BACK'){ const f=read(st,'F',3); if(f!==null&&f<8) yield* drive(st,-(10-f));
         yield* rotateSafe(st,((sig.R??300)<(sig.L??300))?180:-180); } }
+    // hugging a side wall? step ~5 cm away first, or the reverse scrapes the wall and the side sonar sits under its range
+    { const Ls=read(st,'L',3), Rs=read(st,'R',3); const side=(Ls!==null&&Ls<6)?-1:(Rs!==null&&Rs<6)?1:0;
+      if(side){ const a=side<0?-25:25; yield* rotate(st,a); yield* drive(st,12); yield* rotate(st,-a); } }
     setPhase(st,3); const sq=yield* squareBack(st,60);
     if(!sq.ok){ yield* drive(st,8); continue; }
     // check: squared on the BACK wall means both side walls read true and the front is open
@@ -425,24 +441,28 @@ function lineProject(p){ let best=0,bd=1e9; for(let i=1;i<LINE.length;i++){ cons
 function* turnTo(st,h){ const d=wrap(h-st.pose.h), n=Math.max(1,Math.ceil(Math.abs(d)*R2D/3)); for(let i=0;i<n;i++){ st.pose.h+=d/n; st.t+=Math.abs(d/n)*R2D/120; yield 1; } }
 function* goTo(st,x,y,spd){ const dx=x-st.pose.x, dy=y-st.pose.y, L=Math.hypot(dx,dy), n=Math.max(1,Math.ceil(L)); for(let i=0;i<n;i++){ st.pose.x+=dx/n; st.pose.y+=dy/n; st.t+=L/n/(spd||20); pushTrail(st); yield 1; } }
 function* lineAndT2(st,base){
-  setPhase(st,base); yield* turnTo(st,st.pose.h-Math.PI/2); st.t+=0.3;
-  setPhase(st,base+1);
   const front=()=>({x:st.pose.x+RB.front*Math.cos(st.pose.h),y:st.pose.y+RB.front*Math.sin(st.pose.h)});
-  let s=lineProject(front()); const total=LINE_S[LINE_S.length-1], zig=LINE_S[15];
+  const onLine=()=>{ const f=front(); const s=lineProject(f), P=lineAt(s); return Math.hypot(P.x-f.x,P.y-f.y)<1.5; };
+  setPhase(st,base); yield* turnTo(st,0); st.t+=0.3;                  // face the right wall
+  let n=0; while(!onLine()&&n<60){ yield* goTo(st,st.pose.x+1,st.pose.y,12); n++; }  // IRs cross the oval's right side
+  yield* goTo(st,st.pose.x+RB.front,st.pose.y,10);                    // axle over the line
+  yield* turnTo(st,74*D2R);                                           // line heading there
+  setPhase(st,base+1);
+  let s=lineProject(front()); const total=LINE_S[LINE_S.length-1], zig=150;
   while(s<total){ s=Math.min(total,s+1); const P=lineAt(s), h=Math.atan2(P.y-st.pose.y,P.x-st.pose.x);
     st.pose={x:P.x-RB.front*Math.cos(h),y:P.y-RB.front*Math.sin(h),h}; st.t+=1/(s>zig?7:13); pushTrail(st); yield 1; }
   setPhase(st,base+2);
-  const w=INNER[3], dx=w[2]-w[0], dy=w[3]-w[1], L=Math.hypot(dx,dy); const n={x:dy/L*-1,y:dx/L}; // normal
-  const nIn = ((st.pose.x-w[0])*n.x+(st.pose.y-w[1])*n.y)>0 ? {x:-n.x,y:-n.y} : n;
+  const w=INNER[2], dx=w[2]-w[0], dy=w[3]-w[1], L=Math.hypot(dx,dy); const n0={x:-dy/L,y:dx/L};
+  const nIn=((st.pose.x-w[0])*n0.x+(st.pose.y-w[1])*n0.y)>0?{x:-n0.x,y:-n0.y}:n0;    // toward the upper rung
   const reach=RB.front+RB.ptr, goal={x:T2.x-reach*nIn.x,y:T2.y-reach*nIn.y};
-  yield* turnTo(st,Math.atan2(goal.y-st.pose.y,goal.x-st.pose.x)); yield* goTo(st,goal.x,goal.y,10);
+  yield* turnTo(st,Math.atan2(goal.y-st.pose.y,goal.x-st.pose.x)); yield* goTo(st,goal.x,goal.y,8);
   yield* turnTo(st,Math.atan2(nIn.y,nIn.x)); st.t+=0.5; st.atT2=true; }
 
 /* ---------- phases shown in the panel ---------- */
 const COMMON=[
- ['The line is under you','T1 sits at the start of the line. Turn right 90° and the line is already between the two IR sensors, so there is no searching and no chance to grab a decoy.'],
- ['Follow the line','Two IR sensors straddle the line: steer away from whichever sees black, remember the last side seen, slow down in the zigzag. Black that appears far from where the route says the line should be is ignored.'],
- ['Find T2 with the walls','At the end of the line, face the end wall and creep until FRONT matches the value you recorded during practice with the pointer held on T2. The pointer stays on T2\'s side of the wall.']];
+ ['Pick up the line','T1 sits inside the oval. Face the right wall and drive: black is accepted only 14–32 cm into the move, where the oval\'s right side must be. Roll on until the axle is over it, then turn up‑field onto it. This skips the oval lap.'],
+ ['Follow the route','Two IR sensors straddle the line. A route table keyed to encoder distance does the rest: ignore the LEFT sensor where the oval\'s loose end comes close, ignore the RIGHT sensor where the branch peels off toward the T‑wall, slow down in the passage, and make the hairpin as a scripted left turn.'],
+ ['Find T2 with the walls','At the end of the line FRONT sees the ladder. Turn toward the upper rung by the taught angle and creep until FRONT matches the value recorded with the pointer held on T2. The pointer stays on T2\'s side of the rung.']];
 const PH={
  ours:[
  ['Make room','If FRONT sees something closer than 15 cm, back up first. The front of this robot is 17.5 cm ahead of the wheels, so it needs space to spin.'],
@@ -465,7 +485,7 @@ const PH={
  ['Drop','Open the trap door.'],...COMMON]};
 
 /* ---------- run setup ---------- */
-function randomStart(r){ for(let k=0;k<800;k++){ const p={x:12+r()*98,y:11+r()*31,h:(r()*2-1)*Math.PI}; const c=corners(p);
+function randomStart(r){ for(let k=0;k<800;k++){ const p={x:12+r()*98,y:11+r()*40,h:(r()*2-1)*Math.PI}; const c=corners(p);
   if(c.some(q=>q.x<1||q.x>121||q.y<1||q.y>CFG.dash+2)) continue; if(collides(p)) continue; return p; } return {x:61,y:25,h:1}; }
 function randomSys(r){ return {encErr:gaussR(r)*0.005,turnErr:gaussR(r)*0.012,curv:gaussR(r)*6e-5,sonarBias:gaussR(r)*0.4,beam:{F:gaussR(r)*0.7,L:gaussR(r)*0.7,R:gaussR(r)*0.7}}; }
 function makeState(start,sys,seed){ return {pose:{...start},odoH:0,t:0,trail:[{x:start.x,y:start.y}],scan:[],scanMark:null,sys,rnd:mulberry(seed),
@@ -500,7 +520,12 @@ function drawField(){
   ctx.fillStyle=alpha(COL.black,0.55); ctx.font=`${Math.max(10,3.2*K)}px ${css('--mono')}`; ctx.fillText('start region',X(8),Y(CFG.dash)+4.2*K);
   ctx.lineCap='round'; ctx.lineJoin='round';
   for(const d of DECOYS){ ctx.strokeStyle=COL.black; ctx.lineWidth=3*K; poly(ctx,d); ctx.stroke(); }
-  ctx.strokeStyle=COL.black; ctx.lineWidth=3*K; poly(ctx,LINE); ctx.stroke();
+  ctx.strokeStyle=COL.black; ctx.lineWidth=3*K; poly(ctx,LINE_ALL); ctx.stroke();
+  ctx.strokeStyle='#E0A526'; ctx.lineWidth=0.5*K; ctx.fillStyle='#2B3A8F'; ctx.font=`${Math.max(10,3.4*K)}px ${css('--mono')}`;
+  MARKS.forEach((m,i)=>{ const h=m[2]*D2R, c=Math.cos(h), s=Math.sin(h); ctx.beginPath();
+    ctx.moveTo(X(m[0]),Y(m[1])); ctx.lineTo(X(m[0]+15*c),Y(m[1]+15*s));
+    ctx.moveTo(X(m[0]+7.5*s),Y(m[1]-7.5*c)); ctx.lineTo(X(m[0]-7.5*s),Y(m[1]+7.5*c)); ctx.stroke();
+    ctx.fillText(String(i+1),X(m[0])+1.5*K,Y(m[1])+4.5*K); });
   if(view.method==='friend'){ ctx.setLineDash([1.5*K,1.5*K]); ctx.strokeStyle=alpha(COL.friend,0.7); ctx.lineWidth=0.6*K; ctx.beginPath(); ctx.moveTo(X(VIRTUAL.a.x),Y(VIRTUAL.a.y)); ctx.lineTo(X(VIRTUAL.b.x),Y(VIRTUAL.b.y)); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle=COL.friend; ctx.fillText('FRONT = 110 reference (assumed flat)',X(31),Y(VIRTUAL.a.y)-1.2*K); }
   for(const w of WALLS){ ctx.strokeStyle=w.tall?COL.wall:COL['wall-low']; ctx.lineWidth=(w.tall?2.2:1.6)*K; ctx.lineCap='butt'; ctx.beginPath(); ctx.moveTo(X(w.a.x),Y(w.a.y)); ctx.lineTo(X(w.b.x),Y(w.b.y)); ctx.stroke(); }
@@ -512,7 +537,7 @@ function drawField(){
   const mc=view.method==='ours'?COL.ours:COL.friend;
   ctx.strokeStyle=alpha(mc,0.85); ctx.lineWidth=0.7*K; ctx.lineCap='round'; poly(ctx,st.trail); ctx.stroke();
   if(st.home){ ctx.fillStyle=mc; const hx=X(st.home.x), hy=Y(st.home.y), r=2*K; ctx.beginPath(); ctx.moveTo(hx,hy-r); ctx.lineTo(hx+r,hy); ctx.lineTo(hx,hy+r); ctx.lineTo(hx-r,hy); ctx.closePath(); ctx.fill(); }
-  if(view.beams) drawBeams(ctx,st,mc);
+  if(view.beams){ ctx.save(); ctx.beginPath(); ctx.rect(X(0),Y(244),122*K,244*K); ctx.clip(); drawBeams(ctx,st,mc); ctx.restore(); }
   drawRobot(ctx,st.pose,mc,st);
   if(st.drop){ ctx.fillStyle=COL.ink; ctx.strokeStyle=COL.board; ctx.lineWidth=0.5*K; ctx.beginPath(); ctx.arc(X(st.drop.x),Y(st.drop.y),1.6*K,0,7); ctx.fill(); ctx.stroke(); }
 }
@@ -568,7 +593,11 @@ function drawCloseup(){
 /* ---------- single-run controller ---------- */
 const $=s=>document.querySelector(s);
 const view={method:'ours',st:null,gen:null,playing:false,speed:2,beams:true,start:null,sys:null,seed:1};
-function newStart(){ view.seed=(Math.random()*1e9)|0; const r=mulberry(view.seed); view.start=randomStart(r); view.sys=randomSys(r); resetRun(); }
+function markStart(i){ const m=MARKS[i-1]; let p={x:m[0],y:m[1],h:m[2]*D2R};
+  for(let k=0;k<40&&collides(p);k++) p={x:p.x+(p.x<61?0.5:-0.5),y:p.y+0.3,h:p.h};   // nudge off a wall if the mark is tight
+  return p; }
+function newStart(){ view.seed=(Math.random()*1e9)|0; const r=mulberry(view.seed); const sel=+$('#startSel').value;
+  view.start=sel?markStart(sel):randomStart(r); view.sys=randomSys(r); resetRun(); }
 function resetRun(){ view.st=makeState(view.start,view.sys,view.seed^0x5bd1e995); view.gen=null; view.playing=false; $('#play').textContent='Run';
   const st=view.st; read(st,'F'); read(st,'L'); read(st,'R'); st.t=0;
   $('#pStep').textContent='Ready'; $('#pTitle').textContent='Press Run'; $('#pText').textContent='The robot is at a random spot and heading inside the start region. Pick a method, then press Run.';
@@ -593,6 +622,7 @@ $('#play').addEventListener('click',()=>{ if(!view.gen||view.st.finished){ if(vi
   view.playing=!view.playing; $('#play').textContent=view.playing?'Pause':'Resume'; });
 $('#again').addEventListener('click',resetRun);
 $('#newstart').addEventListener('click',newStart);
+$('#startSel').addEventListener('change',newStart);
 $('#speed').addEventListener('change',e=>view.speed=+e.target.value);
 $('#beams').addEventListener('change',e=>{view.beams=e.target.checked; renderAll();});
 for(const b of document.querySelectorAll('.seg button')) b.addEventListener('click',()=>{ view.method=b.dataset.m; for(const o of document.querySelectorAll('.seg button')) o.setAttribute('aria-pressed',String(o===b)); resetRun(); });
@@ -632,7 +662,7 @@ function drawScatter(){ const cv=$('#scatter'), f=fit(cv), ctx=cv.getContext('2d
       ctx.fillStyle=alpha(col,0.75); ctx.beginPath(); ctx.arc(x,y,m.key==='ours'?2.6:3,0,7); ctx.fill(); } }
   ctx.fillStyle=COL.t1; ctx.beginPath(); ctx.arc(c,c,3.5,0,7); ctx.fill(); }
 $('#mcrun').addEventListener('click',runMC);
-$('#apply').addEventListener('click',()=>{ CFG.T1x=clamp(+$('#t1x').value||64,25,97); CFG.T1y=clamp(+$('#t1y').value||93,60,140); $('#t1x').value=CFG.T1x; $('#t1y').value=CFG.T1y; tuneAll(); resetRun(); runMC(); });
+$('#apply').addEventListener('click',()=>{ CFG.T1x=clamp(+$('#t1x').value||57.1,25,97); CFG.T1y=clamp(+$('#t1y').value||96.9,60,140); $('#t1x').value=CFG.T1x; $('#t1y').value=CFG.T1y; tuneAll(); resetRun(); runMC(); });
 
 /* ---------- boot ---------- */
 function onTheme(){ readColors(); renderAll(); if(MC) drawScatter(); }

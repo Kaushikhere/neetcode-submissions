@@ -1,6 +1,6 @@
 # IM rover firmware: "Square, slide, shoot"
 
-One Arduino sketch, `im_rover/im_rover.ino`, for the Raspberry Pi Pico with the **arduino-pico** core (Earle Philhower). Board: *Raspberry Pi Pico*. No extra libraries are needed: `Servo` ships with the core.
+One Arduino sketch, `im_rover/im_rover.ino` plus `im_rover/field_map.h` (your practice field in cm, traced from the photos), for the Raspberry Pi Pico with the **arduino-pico** core (Earle Philhower). Board: *Raspberry Pi Pico*. No extra libraries are needed: `Servo` ships with the core.
 
 - **Core 0** runs motion control at 100 Hz: a speed PI loop on each wheel, heading hold, odometry and stall detection.
 - **Core 1** pings FRONT, RIGHT and LEFT in turn, 30 ms apart, so `pulseIn` never freezes the motors.
@@ -32,16 +32,26 @@ Pins are unchanged otherwise: motors GP0–5, FRONT 8/9, RIGHT 6/7, LEFT 18/19, 
    - Check that L + R is about `SUM_TARGET` (you measured 98.7).
    - Check that x matches a tape measure to within about 1 cm.
    - Tune `SQUARE_PWM`: it should pivot flat against the wall without climbing it.
-9. **T1.** Measure T1's centre from the inner face of the left wall (`T1_X`) and of the back wall (`T1_Y`). Do three full runs. If the item lands consistently off, correct `T1_X` / `T1_Y` by that offset. This is the "teach and repeat" step: it removes whatever systematic error is left.
-10. **`t` teach T2.** Hold the robot with its pointer on T2 and send `t`. Copy the FRONT value into `T2_FRONT_TARGET`.
-11. **Line.** Run once. The log prints how far the robot followed the line. Use it to set:
-    - `LINE_SLOW_FROM`: where the zigzag starts.
-    - `LINE_T2_ZONE`: just before the passage.
-    - `LINE_MAX`: a safety limit.
+9. **Map numbers (`field_map.h`).** The photo trace is good to about 2–4 cm. Measure these with a tape and overwrite them:
+    - `T1_X`, `T1_Y`: the green ring centre, from the inner face of the left wall and of the back wall.
+    - `LINE_PICKUP_X/Y`: where the oval's right side crosses y = T1_Y.
+    - `T2_X/Y`: confirm T2's spot with the organisers.
+
+    Then do three full runs. If the item lands consistently off, correct `T1_X` / `T1_Y` by that offset.
+10. **`t` teach.**
+    - Hold the robot with its pointer on T2 and send `t`. Copy FRONT into `T2_FRONT_TARGET`.
+    - With the IR sensors at the line's end, send `t` again. Copy FRONT into `LINE_END_FRONT`.
+11. **Route table** (`ROUTE[]` in the sketch). Each run prints the route distance where the line ended and where the scripted hairpin fired. Shift the `RT_*` numbers in `field_map.h` until the sections line up:
+    - ignore LEFT at the oval's loose end
+    - SLOW in the passage
+    - ignore RIGHT at the branch
+    - the hairpin pivot
+
+    Check that the hairpin pivot clears the top of the ladder's left panel. If it doesn't, change `preCm`/`turnDeg`.
 12. **On competition day:** check `SOUND_CM_PER_US` against a known distance. The speed of sound changes about 0.17 % per °C.
 
 ## Run
 
-Place the robot, then press BOOTSEL or the GP11 button and take your hand away. The robot starts 0.4 s after the button is released. The serial log shows each phase with timestamps.
+Place the robot (any of start marks 1–6 or anywhere in the box), then press BOOTSEL or the GP11 button and take your hand away. The robot starts 0.4 s after the button is released. The serial log shows each phase with timestamps.
 
 The sketch has passed a strict C++ syntax and type check against stub headers, but it has not been compiled with the rp2040 core or run on the robot. Expect to tune the gains on the bench. The first ones to look at are `PWM_MIN`, `KP_W`/`KI_W` and `SQUARE_PWM`.
