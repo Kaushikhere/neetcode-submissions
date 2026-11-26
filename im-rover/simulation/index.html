@@ -1,0 +1,646 @@
+<title>T1 Run Simulator</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a test-bench sheet. Field plan on the left, instrument panel on the right, the evidence (200 starts) below. */
+:root{
+  --bg:#EDF0EB; --panel:#FFFFFF; --ink:#17211B; --muted:#58655C; --rule:#D2D8D0; --chip:#E3E8E1;
+  --ours:#2357C4; --friend:#D4642A; --fix:#8A7300;
+  --t1:#D41E78; --t2:#6A3CC6;
+  --board:#E8D8B4; --black:#161616; --wall:#2D8A55; --wall-low:#3F7A58; --robot:#2E3A44; --robot-hi:#4A5966;
+  --display:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0F1311; --panel:#161C18; --ink:#E2E9E3; --muted:#98A59C; --rule:#2A332D; --chip:#202822;
+    --ours:#7AA2FF; --friend:#F2884A; --fix:#D6B53C; --t1:#FF4F9F; --t2:#A887FF;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0F1311; --panel:#161C18; --ink:#E2E9E3; --muted:#98A59C; --rule:#2A332D; --chip:#202822;
+  --ours:#7AA2FF; --friend:#F2884A; --fix:#D6B53C; --t1:#FF4F9F; --t2:#A887FF;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.5;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 48px}
+.wrap{max-width:1180px;margin:0 auto;display:grid;gap:28px}
+h1,h2,h3{font-family:var(--display);font-weight:700;letter-spacing:.01em;line-height:1.1;text-wrap:balance;margin:0}
+h1{font-size:clamp(30px,4.4vw,44px)}
+h2{font-size:26px}
+h3{font-size:21px}
+p{margin:0}
+.lede{max-width:68ch;color:var(--muted);margin-top:8px}
+.lede b{color:var(--ink);font-weight:600}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.stage{display:grid;grid-template-columns:minmax(280px,400px) minmax(0,1fr);gap:20px;align-items:start}
+.fieldbox{background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:10px;display:grid;gap:8px}
+#field{width:100%;aspect-ratio:134/256;display:block;max-width:100%}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:12px;height:12px;border-radius:2px;display:inline-block}
+.panel{display:grid;gap:14px;min-width:0}
+.card{background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:14px;display:grid;gap:10px;min-width:0}
+.seg{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--rule);border-radius:8px;overflow:hidden}
+.seg button{font:600 14px var(--body);padding:9px 10px;border:0;background:transparent;color:var(--muted);cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--chip);color:var(--ink)}
+.seg button[data-m="friend"][aria-pressed="true"]{box-shadow:inset 0 -3px 0 var(--friend)}
+.seg button[data-m="ours"][aria-pressed="true"]{box-shadow:inset 0 -3px 0 var(--ours)}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{font:600 14px var(--body);padding:8px 14px;border-radius:7px;border:1px solid var(--rule);background:var(--panel);color:var(--ink);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--panel);border-color:var(--ink)}
+.btn:focus-visible,.seg button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--ours);outline-offset:2px}
+select,input[type=number]{font:500 14px var(--mono);padding:6px 8px;border-radius:6px;border:1px solid var(--rule);background:var(--panel);color:var(--ink)}
+input[type=number]{width:5.5em}
+label{font-size:13px;color:var(--muted);display:inline-flex;gap:6px;align-items:center}
+.phase .step{font-family:var(--mono);font-size:12px;color:var(--muted);letter-spacing:.04em}
+.phase h3{margin-top:2px}
+.phase p{color:var(--ink);max-width:62ch}
+.reads{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.read{background:var(--chip);border-radius:7px;padding:7px 9px;min-width:0}
+.read .k{font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
+.read .v{font-family:var(--mono);font-size:18px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.split{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:12px;align-items:start}
+#scan{width:100%;height:170px;display:block}
+#closeup{width:150px;height:150px;display:block}
+.cap{font-size:12px;color:var(--muted)}
+.result{font-family:var(--mono);font-size:14px;font-variant-numeric:tabular-nums}
+.result b{font-weight:500}
+.mc{display:grid;grid-template-columns:minmax(0,420px) minmax(0,1fr);gap:20px;align-items:start}
+#scatter{width:100%;aspect-ratio:1;display:block;max-width:420px}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:520px}
+th,td{text-align:right;padding:8px 10px;border-bottom:1px solid var(--rule);font-variant-numeric:tabular-nums}
+th{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500}
+th:first-child,td:first-child{text-align:left}
+td .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;vertical-align:middle}
+.why{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.why .card p{color:var(--muted)}
+.why .card p b{color:var(--ink);font-weight:600}
+.err th,.err td{text-align:left}
+.note{font-size:13px;color:var(--muted);max-width:80ch}
+@media (max-width:880px){
+  .stage,.mc{grid-template-columns:minmax(0,1fr)}
+  .why{grid-template-columns:minmax(0,1fr)}
+  .fieldbox{max-width:440px;width:100%;justify-self:center}
+}
+@media (max-width:420px){ .split{grid-template-columns:minmax(0,1fr)} #closeup{justify-self:center} }
+@media (prefers-reduced-motion: reduce){ *{scroll-behavior:auto} }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">IM Competition I · start box → T1 → line → T2</div>
+    <h1>T1 Run Simulator</h1>
+    <p class="lede">Watch two ways to get from a random start to T1. <b>Your friend's method</b> spins until LEFT + RIGHT = 99, homes to a fixed spot and replays a tuned path. <b>Our method</b> lets the 30 cm back wall set the heading by reversing into it, measures across the box with both side sensors, and finishes with one straight drive. The ultrasonic model behaves like a real HC‑SR04: inside its beam it reads the nearest point of a flat wall, so near “straight” the readings stop changing.</p>
+  </header>
+
+  <section class="stage" aria-label="Single run">
+    <div class="fieldbox">
+      <canvas id="field" aria-label="Top-down view of the 122 by 244 cm field with the robot"></canvas>
+      <div class="legend">
+        <span><i class="sw" style="background:var(--wall)"></i>30 cm walls</span>
+        <span><i class="sw" style="background:var(--wall-low)"></i>15 cm walls</span>
+        <span><i class="sw" style="background:var(--t1)"></i>T1</span>
+        <span><i class="sw" style="background:var(--t2)"></i>T2</span>
+        <span><i class="sw" style="background:var(--black)"></i>line and decoys</span>
+      </div>
+      <p class="cap">Inner walls, line and T2 are traced from the official sketch, which is not to scale. Use your own T1 numbers below.</p>
+    </div>
+
+    <div class="panel">
+      <div class="card">
+        <div class="seg" role="group" aria-label="Method">
+          <button type="button" data-m="friend" aria-pressed="false" id="mFriend">Friend's method</button>
+          <button type="button" data-m="ours" aria-pressed="true" id="mOurs">Our method</button>
+        </div>
+        <div class="row">
+          <button class="btn primary" id="play" type="button">Run</button>
+          <button class="btn" id="again" type="button">Same start again</button>
+          <button class="btn" id="newstart" type="button">New random start</button>
+          <label for="speed">Speed
+            <select id="speed"><option value="1">1×</option><option value="2" selected>2×</option><option value="5">4×</option><option value="14">10×</option></select>
+          </label>
+          <label for="beams"><input type="checkbox" id="beams" checked> Sonar beams</label>
+        </div>
+      </div>
+
+      <div class="card phase" aria-live="polite">
+        <div class="step" id="pStep">Ready</div>
+        <h3 id="pTitle">Press Run</h3>
+        <p id="pText">The robot is at a random spot and heading inside the start region. Pick a method, then press Run.</p>
+      </div>
+
+      <div class="card">
+        <div class="reads">
+          <div class="read"><div class="k">Front</div><div class="v" id="rF">–</div></div>
+          <div class="read"><div class="k">Left</div><div class="v" id="rL">–</div></div>
+          <div class="read"><div class="k">Right</div><div class="v" id="rR">–</div></div>
+          <div class="read"><div class="k">Left + Right</div><div class="v" id="rS">–</div></div>
+          <div class="read"><div class="k">True heading</div><div class="v" id="rH">–</div></div>
+          <div class="read"><div class="k">Clock</div><div class="v" id="rT">0.0 s</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="split">
+          <div style="min-width:0">
+            <div class="eyebrow">Left + Right while spinning</div>
+            <canvas id="scan" aria-label="Chart of left plus right reading against heading"></canvas>
+            <p class="cap" id="scanCap">Grey line: what LEFT + RIGHT would read at every heading from this start. It sits flat at 99 for roughly ±15° around straight, so “stop when the sum is 99” stops at the edge of the flat part, not at straight.</p>
+          </div>
+          <div>
+            <div class="eyebrow">Drop close‑up</div>
+            <canvas id="closeup" aria-label="Close-up of where the item landed relative to T1"></canvas>
+            <p class="cap">Rings at 1, 2 and 5 cm.</p>
+          </div>
+        </div>
+        <div class="result" id="result">No drop yet.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" aria-label="200 random starts">
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <div class="eyebrow">Monte Carlo</div>
+        <h2>200 random starts, same robot errors for every method</h2>
+      </div>
+      <button class="btn" id="mcrun" type="button">Run 200 new starts</button>
+    </div>
+    <p class="note">Each start gets its own random calibration errors (encoder scale ±0.5 %, turn scale ±1.2 %, a slight curve when driving straight, sonar offset ±0.4 cm) and every method faces exactly the same ones. The friend's replay path is tuned on 40 practice runs first, the way a team tunes it on the practice field.</p>
+    <div class="mc">
+      <canvas id="scatter" aria-label="Scatter plot of where the item landed around T1 for each method"></canvas>
+      <div style="min-width:0;display:grid;gap:12px">
+        <div class="tablewrap"><table id="stats"><thead><tr><th>Method</th><th>Median miss</th><th>90 % within</th><th>Worst</th><th>≤ 2 cm</th><th>≤ 5 cm</th><th>Time to drop</th></tr></thead><tbody><tr><td colspan="7">Running…</td></tr></tbody></table></div>
+        <p class="note" id="mcnote">Every dot is one run's item position relative to T1 (centre). Runs that land outside the plot are drawn as arrows on the edge.</p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-label="Where the error comes from" style="display:grid;gap:14px">
+    <h2>Where the T1 error comes from</h2>
+    <div class="why">
+      <div class="card"><h3>Heading reference</h3><p><b>Friend:</b> LEFT + RIGHT is flat near straight because each sensor reads the perpendicular distance anywhere inside its ~15° beam. Stopping on the first 99 leaves the robot 10–15° off, and the sign flips whenever a blocked turn reverses direction.</p><p><b>Ours:</b> reversing into the 30 cm back wall until both rear corners touch. Typical error well under 1°.</p></div>
+      <div class="card"><h3>Turns after the reference</h3><p><b>Friend:</b> three or four encoder turns after the heading was set, each worth about ±1 to 1.5°, all carried into the replay.</p><p><b>Ours:</b> none. The second squaring happens after the last turn, so the straight shot starts with the wall's heading.</p></div>
+      <div class="card"><h3>Position reference</h3><p><b>Friend:</b> FRONT = 50 to a side wall, then FRONT = 110 to an up‑field wall that is really an angled 15 cm wall (we give it the benefit of the doubt here and model it as flat).</p><p><b>Ours:</b> only perpendicular readings to long 30 cm walls: back wall by contact, side walls with both sensors.</p></div>
+    </div>
+  </section>
+
+  <section class="card" aria-label="Settings">
+    <div class="eyebrow">Your field</div>
+    <div class="row">
+      <label for="t1x">T1 x (cm from left wall) <input type="number" id="t1x" value="64" min="25" max="97" step="0.5"></label>
+      <label for="t1y">T1 y (cm from back wall) <input type="number" id="t1y" value="93" min="60" max="140" step="0.5"></label>
+      <button class="btn" id="apply" type="button">Apply and rerun</button>
+    </div>
+    <p class="note">Defaults come from the official sketch. Measure T1 on the practice field (centre of the target, from the inner face of the left wall and of the back wall) and enter it here; the same two numbers go into the firmware.</p>
+  </section>
+</div>
+
+<script>
+"use strict";
+/* ---------- constants ---------- */
+const D2R=Math.PI/180, R2D=180/Math.PI;
+const wrap=a=>{a=(a+Math.PI)%(2*Math.PI); if(a<0)a+=2*Math.PI; return a-Math.PI;};
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const CFG={T1x:64,T1y:93,side:58,dash:44};
+// robot geometry, cm, measured from the axle midpoint (rear drive wheels, caster at the front)
+const RB={rear:4.5,front:17.5,half:10.65,body:8.0,sideFwd:10.5,sideLat:11.5,ptr:3,irLat:4.5};
+const SUM0=122-2*RB.sideLat; // 99, matches the measured 98.7
+const INNER=[[43.2,200.2,79.5,148.4],[30.1,150.9,55.2,113.2],[17.8,135.8,30.1,150.9],[65.7,167.3,42.9,132.3],[72.8,158.4,48.2,122.7],[75.2,210.3,98.4,176.1],[87.2,192.9,100.4,212.5]];
+const LINE=[[71.7,93.1],[80.2,95.1],[90.7,98.6],[97.7,103.1],[102.1,110.7],[103.4,125.8],[103.0,138.3],[100.4,148.4],[94.2,157.2],[87.2,171.0],[76.6,188.6],[66.1,206.2],[59.1,218.8],[55.6,223.8],[48.5,226.4],[39.7,229.4],[34.5,214.3],[28.8,224.6],[19.0,216.3],[25.0,204.2],[28.8,190.6],[37.6,197.9],[30.6,181.6],[44.7,186.6],[38.3,165.5],[52.0,178.1],[43.6,154.7]];
+const DECOYS=[[[14,72],[30,86],[24,104],[12,118]],[[82,140],[94,112]],[[40,60],[52,74],[48,92]],[[108,64],[112,90],[106,104]]];
+const T2={x:54.1,y:150.9};
+const FHOME=110; // friend's home: FRONT = 110 (user's number)
+const VIRTUAL={a:{x:30,y:30+RB.front+FHOME},b:{x:100,y:30+RB.front+FHOME}}; // assumed flat far wall for the friend's last homing step
+
+let WALLS=[], PTS=[];
+function buildWorld(){
+  WALLS=[{a:{x:0,y:0},b:{x:122,y:0},tall:true,name:'back'},{a:{x:0,y:0},b:{x:0,y:CFG.side},tall:true,name:'left'},{a:{x:122,y:0},b:{x:122,y:CFG.side},tall:true,name:'right'}];
+  for(const w of INNER) WALLS.push({a:{x:w[0],y:w[1]},b:{x:w[2],y:w[3]},tall:false,name:'inner'});
+  PTS=[{x:0,y:0,maxR:250},{x:122,y:0,maxR:250}];
+  const add=(p)=>{ if(!PTS.some(q=>Math.hypot(q.x-p.x,q.y-p.y)<1)) PTS.push({x:p.x,y:p.y,maxR:130}); };
+  for(const w of WALLS){ add(w.a); add(w.b); }
+}
+
+/* ---------- random ---------- */
+function mulberry(seed){ return ()=>{ seed|=0; seed=seed+0x6D2B79F5|0; let t=Math.imul(seed^seed>>>15,1|seed); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+function gaussR(r){ let u=0; while(u===0)u=r(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*r()); }
+const g=st=>gaussR(st.rnd);
+
+/* ---------- geometry ---------- */
+function corners(p){ const c=Math.cos(p.h), s=Math.sin(p.h);
+  return [[-RB.rear,-RB.half],[RB.front,-RB.half],[RB.front,RB.half],[-RB.rear,RB.half]].map(([f,l])=>({x:p.x+f*c-l*s,y:p.y+f*s+l*c})); }
+function segX(p1,p2,p3,p4,strict){ const d=(p2.x-p1.x)*(p4.y-p3.y)-(p2.y-p1.y)*(p4.x-p3.x); if(Math.abs(d)<1e-12) return false;
+  const u=((p3.x-p1.x)*(p4.y-p3.y)-(p3.y-p1.y)*(p4.x-p3.x))/d, v=((p3.x-p1.x)*(p2.y-p1.y)-(p3.y-p1.y)*(p2.x-p1.x))/d;
+  return strict ? (u>1e-6&&u<1-1e-6&&v>=0&&v<=1) : (u>=0&&u<=1&&v>=0&&v<=1); }
+function inPoly(pt,poly){ let ins=false; for(let i=0,j=poly.length-1;i<poly.length;j=i++){ const a=poly[i],b=poly[j]; if(((a.y>pt.y)!==(b.y>pt.y))&&(pt.x<(b.x-a.x)*(pt.y-a.y)/(b.y-a.y)+a.x)) ins=!ins; } return ins; }
+function collides(p,skip){ const c=corners(p);
+  for(const w of WALLS){ if(skip&&skip===w.name) continue;
+    for(let i=0;i<4;i++) if(segX(c[i],c[(i+1)%4],w.a,w.b,false)) return true;
+    if(inPoly(w.a,c)||inPoly(w.b,c)) return true; }
+  return false; }
+function visible(a,b){ const dx=a.x-b.x, dy=a.y-b.y, L=Math.hypot(dx,dy); const bb={x:b.x+dx/L*0.3,y:b.y+dy/L*0.3};
+  for(const w of WALLS) if(segX(a,bb,w.a,w.b,true)) return false; return true; }
+function sensorPoses(p){ const c=Math.cos(p.h), s=Math.sin(p.h);
+  return { F:{x:p.x+RB.front*c,y:p.y+RB.front*s,h:p.h},
+           L:{x:p.x+RB.sideFwd*c-RB.sideLat*s,y:p.y+RB.sideFwd*s+RB.sideLat*c,h:p.h+Math.PI/2},
+           R:{x:p.x+RB.sideFwd*c+RB.sideLat*s,y:p.y+RB.sideFwd*s-RB.sideLat*c,h:p.h-Math.PI/2} }; }
+
+/* ---------- HC-SR04 model ----------
+   A flat wall answers only from the point where the sound hits it square (the foot of the perpendicular).
+   If that point is inside the beam, the reading is the perpendicular distance, whatever the angle.
+   If not, the wall sends the sound away and only corners or wall ends inside the beam can answer. */
+// measured HC-SR04 flat zone against a smooth wall: about ±15° (some units more); each sensor gets its own small offset
+function beamHalf(d,b){ return D2R*(b||15); }
+function sonarClean(sp,extra,only,beam){
+  let best=Infinity;
+  const walls=only?extra:(extra?WALLS.concat(extra):WALLS);
+  for(const w of walls){ const dx=w.b.x-w.a.x, dy=w.b.y-w.a.y, L2=dx*dx+dy*dy;
+    const t=((sp.x-w.a.x)*dx+(sp.y-w.a.y)*dy)/L2; if(t<0||t>1) continue;
+    const fx=w.a.x+t*dx, fy=w.a.y+t*dy, vx=fx-sp.x, vy=fy-sp.y, d=Math.hypot(vx,vy);
+    if(d<0.5||d>=best) continue;
+    if(Math.abs(wrap(Math.atan2(vy,vx)-sp.h))>beamHalf(d,beam)) continue;
+    if(only||visible(sp,{x:fx,y:fy})) best=d; }
+  if(only) return isFinite(best)?best:null;
+  for(const q of PTS){ const vx=q.x-sp.x, vy=q.y-sp.y, d=Math.hypot(vx,vy);
+    if(d>q.maxR||d<0.5||d>=best) continue;
+    if(Math.abs(wrap(Math.atan2(vy,vx)-sp.h))>beamHalf(d,beam)) continue;
+    if(visible(sp,q)) best=d; }
+  return isFinite(best)&&best<=250 ? best : null; }
+function sonar(st,which,opt){
+  const sp=sensorPoses(st.pose)[which];
+  let d=sonarClean(sp,opt&&opt.virtual?[VIRTUAL]:null,!!(opt&&opt.virtual),15+st.sys.beam[which]);
+  if(d===null) return null;
+  if(st.rnd()<0.01) return null;               // occasional missed echo
+  d+=g(st)*(0.2+0.003*d)+st.sys.sonarBias;
+  return Math.max(2,Math.round(d*10)/10); }
+function read(st,which,n,opt){ n=n||1; const ok=[];
+  for(let i=0;i<n;i++){ const v=sonar(st,which,opt); if(v!==null) ok.push(v); }
+  st.t+=0.012*n; ok.sort((a,b)=>a-b);
+  const v = n===1 ? (ok.length?ok[0]:null) : (ok.length*2>n ? ok[(ok.length-1)>>1] : null);
+  st.readings[which]=v; return v; }
+
+/* ---------- motion primitives (true pose gets the errors, the robot only knows commands) ---------- */
+function pushTrail(st){ const L=st.trail[st.trail.length-1]; if(!L||Math.hypot(L.x-st.pose.x,L.y-st.pose.y)>0.8) st.trail.push({x:st.pose.x,y:st.pose.y}); }
+function* rotate(st,deg,o){ o=o||{}; const n=Math.max(1,Math.ceil(Math.abs(deg)/(o.step||2.5))); const cmd=deg/n;
+  const mErr=g(st)*0.006, rate=o.rate||120; let done=0;
+  for(let i=0;i<n;i++){ const prev=st.pose.h;
+    st.pose.h=prev+cmd*D2R*(1+st.sys.turnErr+mErr);
+    if(collides(st.pose)){ st.pose.h=prev; st.t+=0.15; st.blocks++; return {blocked:true,done}; }
+    st.odoH+=cmd*D2R; done+=cmd; st.t+=Math.abs(cmd)/rate; st.turned+=Math.abs(cmd);
+    if(o.each) o.each(st); yield 1; }
+  st.t+=0.12; return {blocked:false,done}; }
+function* drive(st,cm,o){ o=o||{}; const sg=Math.sign(cm); let rem=Math.abs(cm), moved=0; const speed=o.speed||25, mErr=g(st)*0.002;
+  while(rem>1e-6){ const ds=Math.min(1,rem)*sg; rem-=Math.abs(ds);
+    const act=ds*(1+st.sys.encErr+mErr), dh=st.sys.curv*act+g(st)*0.0003, p=st.pose;
+    const np={x:p.x+act*Math.cos(p.h+dh/2),y:p.y+act*Math.sin(p.h+dh/2),h:p.h+dh};
+    if(!o.ghost&&collides(np)){ st.t+=0.2; return {blocked:true,moved}; }
+    st.pose=np; moved+=ds; st.t+=Math.abs(ds)/speed; pushTrail(st); yield 1; }
+  st.t+=0.25; return {blocked:false,moved}; }
+// reverse until a rear corner touches the back wall, then keep pushing: the chassis pivots flat against it
+function* squareBack(st,maxCm){ let moved=0;
+  while(moved<maxCm){ const p=st.pose, act=0.5*(1+st.sys.encErr);
+    const np={x:p.x-act*Math.cos(p.h),y:p.y-act*Math.sin(p.h),h:p.h-st.sys.curv*act};
+    const c=corners(np);
+    if(Math.min(c[0].y,c[3].y)<=0){
+      if(Math.abs(wrap(p.h-Math.PI/2))>40*D2R){ st.t+=0.8; return {ok:false}; }
+      const C=c[0].y<c[3].y?c[0]:c[3], isRight=c[0].y<c[3].y;
+      const hf=Math.PI/2+g(st)*0.35*D2R, f={x:Math.cos(hf),y:Math.sin(hf)}, l={x:-Math.sin(hf),y:Math.cos(hf)}, s=isRight?1:-1;
+      const goal={x:C.x+RB.rear*f.x+s*RB.half*l.x+g(st)*0.25, y:RB.rear, h:hf};
+      const start={...st.pose};
+      for(let k=1;k<=8;k++){ const u=k/8; st.pose={x:start.x+(goal.x-start.x)*u,y:start.y+(goal.y-start.y)*u,h:start.h+wrap(goal.h-start.h)*u}; pushTrail(st); yield 1; }
+      st.t+=moved/15+0.8; st.odoH=Math.PI/2; st.squared++;
+      return {ok:true}; }
+    if(collides(np,'back')){ st.t+=moved/15+0.5; return {ok:false}; }
+    st.pose=np; moved+=0.5; pushTrail(st); if(((moved*2)|0)%2===0) yield 1; }
+  st.t+=moved/15; return {ok:false}; }
+function* rotateSafe(st,deg){ let rem=deg, tries=0;
+  while(Math.abs(rem)>0.5&&tries<6){ const r=yield* rotate(st,rem); rem-=r.done;
+    if(r.blocked){ tries++; const f=read(st,'F'); yield* drive(st,(f!==null&&f<14)?-5:4);
+      if(tries===3) rem = rem>0 ? rem-360 : rem+360; } } }
+function dropItem(st){ st.drop={x:st.pose.x+g(st)*0.3,y:st.pose.y+g(st)*0.3}; st.err=Math.hypot(st.drop.x-CFG.T1x,st.drop.y-CFG.T1y); st.tDrop=st.t; st.t+=1.0; }
+function setPhase(st,i){ st.phase=i; }
+
+/* ---------- our method: spin to a signature, square, measure, slide, square, shoot ---------- */
+const spread=(run,k)=>{ const v=run.map(o=>o[k]); return Math.max(...v)-Math.min(...v); };
+function* scanForSignature(st){
+  const l0=read(st,'L'), r0=read(st,'R');
+  let dir=((l0??300)<(r0??300))?-1:1, total=0, run=[], blocks=0, flips=0, open={odo:st.odoH,F:read(st,'F')??250};
+  st.scan=[]; st.scanMark=null;
+  while(total<720){
+    const r=yield* rotate(st,2.5*dir,{rate:60});
+    if(r.blocked){ blocks++; run=[];
+      // escape: turn back to the most open heading seen so far, drive into that space, keep scanning
+      yield* rotate(st,R2D*wrap(open.odo-st.odoH));
+      const f=read(st,'F',3), go=f===null?12:clamp(f-20,-6,12);
+      if(Math.abs(go)>1) yield* drive(st,go);
+      if(blocks>=3){ dir=-dir; blocks=0; flips++; } if(flips>=3) break; continue; }
+    total+=2.5;
+    const F=read(st,'F'), L=read(st,'L'), R=read(st,'R'), sum=(L!==null&&R!==null)?L+R:null;
+    if((F??250)>open.F) open={odo:st.odoH,F:F??250};
+    // facing the back wall: FRONT can be at most ~27 cm (start region is ~44 cm deep); facing up-field: FRONT is far
+    let cls=null;
+    if(sum!==null&&Math.abs(sum-SUM0)<4){ if(F!==null&&F<40) cls='BACK'; else if(F===null||F>=48) cls='UP'; }
+    st.scan.push({h:st.pose.h,sum,hit:!!cls});
+    const rec={odo:st.odoH,cls,L,R,F,S:sum,h:st.pose.h};
+    if(cls&&(run.length===0||run[0].cls===cls)) run.push(rec);
+    else { if(run.length>=4&&spread(run,'S')<3){ const a=run[0], b=run[run.length-1], mid=run[run.length>>1];
+             const c={type:a.cls,center:a.odo+wrap(b.odo-a.odo)/2,L:mid.L,R:mid.R,F:mid.F};
+             st.scanMark=a.h+wrap(b.h-a.h)/2; return c; }
+           run=cls?[rec]:[]; } }
+  return null; }
+function* runOurs(st){
+  setPhase(st,0); const F0=read(st,'F',3);
+  if(F0!==null&&F0<15) yield* drive(st,-(18-F0));
+  for(let attempt=0;attempt<3;attempt++){
+    setPhase(st,1); const sig=yield* scanForSignature(st);
+    setPhase(st,2);
+    if(sig){ yield* rotate(st,R2D*wrap(sig.center-st.odoH));
+      if(sig.type==='BACK'){ const f=read(st,'F',3); if(f!==null&&f<8) yield* drive(st,-(10-f));
+        yield* rotateSafe(st,((sig.R??300)<(sig.L??300))?180:-180); } }
+    setPhase(st,3); const sq=yield* squareBack(st,60);
+    if(!sq.ok){ yield* drive(st,8); continue; }
+    // check: squared on the BACK wall means both side walls read true and the front is open
+    const Lc=read(st,'L',3), Rc=read(st,'R',3), Fc=read(st,'F',3);
+    if(Lc!==null&&Rc!==null&&Math.abs(Lc+Rc-SUM0)<4&&(Fc===null||Fc>=48)) break;
+    yield* drive(st,20); }
+  setPhase(st,4); const L=read(st,'L',5), R=read(st,'R',5);
+  const xs=[]; if(L!==null) xs.push(L+RB.sideLat); if(R!==null) xs.push(122-R-RB.sideLat);
+  let x = xs.length===2 ? (Math.abs(xs[0]-xs[1])<3 ? (xs[0]+xs[1])/2 : (L<R?xs[0]:xs[1])) : (xs[0]??61);
+  st.xEst=x;
+  setPhase(st,5);
+  if(Math.abs(x-CFG.T1x)>0.8){
+    yield* drive(st,22); const right=x<CFG.T1x;
+    yield* rotate(st,right?-90:90);
+    const target=right?(122-CFG.T1x-RB.front):(CFG.T1x-RB.front);
+    for(let k=0;k<4;k++){ const f=read(st,'F',3); if(f===null) break; const e=f-target; if(Math.abs(e)<0.4) break; yield* drive(st,clamp(e,-40,40),{speed:12}); }
+    yield* rotate(st,right?90:-90);
+    setPhase(st,6); yield* squareBack(st,40); }
+  st.home={...st.pose};
+  setPhase(st,7); yield* drive(st,CFG.T1y-RB.rear,{speed:25});
+  setPhase(st,8); dropItem(st); }
+
+/* ---------- friend's method (reconstructed from your notes): sum-spin, centre, home, replay ---------- */
+function* runFriend(st,variant,replay){
+  setPhase(st,0); let dir=1, total=0, flips=0, band=[]; st.scan=[]; st.scanMark=null;
+  while(total<720){
+    const r=yield* rotate(st,2.5*dir,{rate:60});
+    if(r.blocked){ dir=-dir; flips++; band=[];
+      if(flips>=2){ const f=read(st,'F'); yield* drive(st,(f===null||f>25)?15:-8); flips=0; } continue; }
+    total+=2.5;
+    const L=read(st,'L'), R=read(st,'R'), sum=(L!==null&&R!==null)?L+R:null, ok=sum!==null&&Math.abs(sum-99)<=1.5;
+    st.scan.push({h:st.pose.h,sum,hit:ok});
+    if(variant==='first'){ if(ok){ st.scanMark=st.pose.h; break; } }
+    else { if(ok) band.push({odo:st.odoH,h:st.pose.h});
+      else if(band.length>=2){ const a=band[0], b=band[band.length-1];
+        yield* rotate(st,R2D*wrap(a.odo+wrap(b.odo-a.odo)/2-st.odoH)); st.scanMark=st.pose.h; break; }
+      else band=[]; } }
+  setPhase(st,1); const F1=read(st,'F',3); if(F1!==null&&F1<50) yield* rotateSafe(st,180);
+  setPhase(st,2); let r=yield* rotate(st,90);
+  if(r.blocked){ yield* rotate(st,-r.done); r=yield* rotate(st,-90); }
+  setPhase(st,3);
+  for(let k=0;k<5;k++){ const f=read(st,'F',3); if(f===null) break; const e=f-50; if(Math.abs(e)<0.5) break; yield* drive(st,clamp(e,-30,30),{speed:12}); }
+  setPhase(st,4); const Lx=read(st,'L',3), Rx=read(st,'R',3);
+  // turn toward the higher reading; with one echo missing, a short valid reading means the other side is open
+  const tdir = (Lx!==null&&Rx!==null) ? (Rx>Lx?-90:90) : Rx!==null ? (Rx>50?-90:90) : Lx!==null ? (Lx>50?90:-90) : 90;
+  yield* rotateSafe(st,tdir);
+  setPhase(st,5);
+  for(let k=0;k<5;k++){ const f=read(st,'F',3,{virtual:true}); if(f===null){ yield* drive(st,8); continue; } const e=f-FHOME; if(Math.abs(e)<0.5) break; yield* drive(st,clamp(e,-25,25),{speed:12}); }
+  st.home={...st.pose};
+  if(!replay) return;
+  setPhase(st,6); yield* rotate(st,replay.turn); yield* drive(st,replay.dist,{speed:25});
+  setPhase(st,7); dropItem(st); }
+
+/* ---------- line and T2 (schematic, no error model) ---------- */
+const LINE_S=(()=>{ const s=[0]; for(let i=1;i<LINE.length;i++) s.push(s[i-1]+Math.hypot(LINE[i][0]-LINE[i-1][0],LINE[i][1]-LINE[i-1][1])); return s; })();
+function lineAt(s){ for(let i=1;i<LINE.length;i++) if(s<=LINE_S[i]||i===LINE.length-1){ const u=clamp((s-LINE_S[i-1])/(LINE_S[i]-LINE_S[i-1]),0,1); return {x:LINE[i-1][0]+u*(LINE[i][0]-LINE[i-1][0]),y:LINE[i-1][1]+u*(LINE[i][1]-LINE[i-1][1])}; } }
+function lineProject(p){ let best=0,bd=1e9; for(let i=1;i<LINE.length;i++){ const a={x:LINE[i-1][0],y:LINE[i-1][1]}, b={x:LINE[i][0],y:LINE[i][1]}, dx=b.x-a.x, dy=b.y-a.y, L2=dx*dx+dy*dy; const u=clamp(((p.x-a.x)*dx+(p.y-a.y)*dy)/L2,0,1); const d=Math.hypot(a.x+u*dx-p.x,a.y+u*dy-p.y); if(d<bd){bd=d;best=LINE_S[i-1]+u*Math.sqrt(L2);} } return best; }
+function* turnTo(st,h){ const d=wrap(h-st.pose.h), n=Math.max(1,Math.ceil(Math.abs(d)*R2D/3)); for(let i=0;i<n;i++){ st.pose.h+=d/n; st.t+=Math.abs(d/n)*R2D/120; yield 1; } }
+function* goTo(st,x,y,spd){ const dx=x-st.pose.x, dy=y-st.pose.y, L=Math.hypot(dx,dy), n=Math.max(1,Math.ceil(L)); for(let i=0;i<n;i++){ st.pose.x+=dx/n; st.pose.y+=dy/n; st.t+=L/n/(spd||20); pushTrail(st); yield 1; } }
+function* lineAndT2(st,base){
+  setPhase(st,base); yield* turnTo(st,st.pose.h-Math.PI/2); st.t+=0.3;
+  setPhase(st,base+1);
+  const front=()=>({x:st.pose.x+RB.front*Math.cos(st.pose.h),y:st.pose.y+RB.front*Math.sin(st.pose.h)});
+  let s=lineProject(front()); const total=LINE_S[LINE_S.length-1], zig=LINE_S[15];
+  while(s<total){ s=Math.min(total,s+1); const P=lineAt(s), h=Math.atan2(P.y-st.pose.y,P.x-st.pose.x);
+    st.pose={x:P.x-RB.front*Math.cos(h),y:P.y-RB.front*Math.sin(h),h}; st.t+=1/(s>zig?7:13); pushTrail(st); yield 1; }
+  setPhase(st,base+2);
+  const w=INNER[3], dx=w[2]-w[0], dy=w[3]-w[1], L=Math.hypot(dx,dy); const n={x:dy/L*-1,y:dx/L}; // normal
+  const nIn = ((st.pose.x-w[0])*n.x+(st.pose.y-w[1])*n.y)>0 ? {x:-n.x,y:-n.y} : n;
+  const reach=RB.front+RB.ptr, goal={x:T2.x-reach*nIn.x,y:T2.y-reach*nIn.y};
+  yield* turnTo(st,Math.atan2(goal.y-st.pose.y,goal.x-st.pose.x)); yield* goTo(st,goal.x,goal.y,10);
+  yield* turnTo(st,Math.atan2(nIn.y,nIn.x)); st.t+=0.5; st.atT2=true; }
+
+/* ---------- phases shown in the panel ---------- */
+const COMMON=[
+ ['The line is under you','T1 sits at the start of the line. Turn right 90° and the line is already between the two IR sensors, so there is no searching and no chance to grab a decoy.'],
+ ['Follow the line','Two IR sensors straddle the line: steer away from whichever sees black, remember the last side seen, slow down in the zigzag. Black that appears far from where the route says the line should be is ignored.'],
+ ['Find T2 with the walls','At the end of the line, face the end wall and creep until FRONT matches the value you recorded during practice with the pointer held on T2. The pointer stays on T2\'s side of the wall.']];
+const PH={
+ ours:[
+ ['Make room','If FRONT sees something closer than 15 cm, back up first. The front of this robot is 17.5 cm ahead of the wheels, so it needs space to spin.'],
+ ['Spin and listen','Turn slowly, away from the nearer side wall. Look for FRONT short with LEFT + RIGHT = 99 (facing the back wall), or FRONT long with LEFT + RIGHT = 99 (facing up‑field). Keep turning until that pattern ends, then go back to its middle.'],
+ ['Face up‑field','From the middle of the pattern, turn so the back of the robot faces the back wall. Swing the long front end toward the farther side wall so it never clips a wall.'],
+ ['Square on the back wall','Reverse slowly into the 30 cm wall and keep pushing for half a second. Both rear corners end up touching, so the heading is now exact and the axle is exactly 4.5 cm from the wall.'],
+ ['Measure across the box','LEFT and RIGHT now point straight at the side walls, so both readings are true distances. The two position estimates are averaged.'],
+ ['Slide under T1','Drive out 22 cm, turn 90° to face a side wall, creep until FRONT reads the distance that puts the axle in line with T1, then turn back.'],
+ ['Square again','Reverse into the back wall a second time. This wipes out the heading error of the last two turns. The robot now sits on the home spot directly below T1.'],
+ ['One straight shot','Drive straight up‑field on encoder distance with heading hold. No turn happens between the last squaring and T1.'],
+ ['Drop','Stop, wait 0.3 s to settle, open the trap door. The item falls between the wheels, right under the axle.'],...COMMON],
+ friend:[
+ ['Spin until LEFT + RIGHT = 99','Turn and stop on the first reading with LEFT + RIGHT inside 99 ± 1.5. Each side sensor reads the perpendicular distance anywhere inside its beam, so the sum reaches 99 about 15° before the robot is straight.'],
+ ['Front or back?','FRONT ≥ 50 means facing up‑field. Otherwise turn 180°.'],
+ ['Turn to a side wall','Turn 90° to face the left wall. If that turn is blocked, turn the other way and face the right wall instead.'],
+ ['Drive until FRONT = 50','Creep until the front sensor is 50 cm from the side wall, which puts the robot near mid‑box.'],
+ ['Turn toward the open side','Turn 90° toward whichever of LEFT and RIGHT reads higher.'],
+ ['Drive until FRONT = 110','Range to the up‑field wall. That is the home spot. (Modelled here as a flat wall, which is kinder than the real angled one.)'],
+ ['Replay the taught path','The same turn and the same distance every run, tuned on practice runs so that on average it lands on T1.'],
+ ['Drop','Open the trap door.'],...COMMON]};
+
+/* ---------- run setup ---------- */
+function randomStart(r){ for(let k=0;k<800;k++){ const p={x:12+r()*98,y:11+r()*31,h:(r()*2-1)*Math.PI}; const c=corners(p);
+  if(c.some(q=>q.x<1||q.x>121||q.y<1||q.y>CFG.dash+2)) continue; if(collides(p)) continue; return p; } return {x:61,y:25,h:1}; }
+function randomSys(r){ return {encErr:gaussR(r)*0.005,turnErr:gaussR(r)*0.012,curv:gaussR(r)*6e-5,sonarBias:gaussR(r)*0.4,beam:{F:gaussR(r)*0.7,L:gaussR(r)*0.7,R:gaussR(r)*0.7}}; }
+function makeState(start,sys,seed){ return {pose:{...start},odoH:0,t:0,trail:[{x:start.x,y:start.y}],scan:[],scanMark:null,sys,rnd:mulberry(seed),
+  readings:{F:null,L:null,R:null},phase:-1,drop:null,err:null,tDrop:null,home:null,blocks:0,turned:0,squared:0,atT2:false}; }
+function runToEnd(gen){ let n=0; while(n<60000){ const r=gen.next(); if(r.done) return true; n++; } return false; }
+
+let REPLAY={first:null,centre:null};
+function tuneReplay(variant){ const hs=[], xs=[], ys=[];
+  for(let i=0;i<40;i++){ const r=mulberry(900001+i); const st=makeState(randomStart(r),randomSys(r),77+i);
+    runToEnd(runFriend(st,variant,null)); xs.push(st.pose.x); ys.push(st.pose.y); hs.push(st.pose.h); }
+  const med=a=>{ const b=[...a].sort((p,q)=>p-q); return b[b.length>>1]; };
+  const hx=med(hs.map(Math.cos)), hy=med(hs.map(Math.sin)), h=Math.atan2(hy,hx), x=med(xs), y=med(ys);
+  return {turn:R2D*wrap(Math.atan2(CFG.T1y-y,CFG.T1x-x)-h),dist:Math.hypot(CFG.T1x-x,CFG.T1y-y)}; }
+function tuneAll(){ REPLAY.first=tuneReplay('first'); REPLAY.centre=tuneReplay('centre'); }
+
+/* ---------- drawing ---------- */
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let COL={};
+function readColors(){ for(const k of ['bg','panel','ink','muted','rule','chip','ours','friend','fix','t1','t2','board','black','wall','wall-low','robot','robot-hi']) COL[k]=css('--'+k); }
+function fit(cv){ const r=cv.getBoundingClientRect(), dpr=Math.min(2,window.devicePixelRatio||1); const w=Math.max(10,Math.round(r.width*dpr)), h=Math.max(10,Math.round(r.height*dpr)); if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;} return {w,h,dpr,cw:r.width,ch:r.height}; }
+const M=6; let K=1, FH=0;
+const X=x=>(x+M)*K, Y=y=>(244+M-y)*K;
+function poly(ctx,pts,close){ ctx.beginPath(); pts.forEach((p,i)=>i?ctx.lineTo(X(p[0]??p.x),Y(p[1]??p.y)):ctx.moveTo(X(p[0]??p.x),Y(p[1]??p.y))); if(close) ctx.closePath(); }
+function alpha(hex,a){ if(!hex.startsWith('#')) return hex; const n=parseInt(hex.slice(1),16); return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`; }
+function drawField(){
+  const cv=$('#field'), f=fit(cv), ctx=cv.getContext('2d'); K=f.w/(122+2*M); FH=f.h;
+  ctx.setTransform(1,0,0,1,0,0); ctx.fillStyle=COL.panel; ctx.fillRect(0,0,f.w,f.h);
+  ctx.fillStyle=COL.board; ctx.fillRect(X(0),Y(244),122*K,244*K);
+  ctx.fillStyle=COL.black; // 5 cm border
+  ctx.fillRect(X(0),Y(244),122*K,5*K); ctx.fillRect(X(0),Y(5),122*K,5*K); ctx.fillRect(X(0),Y(244),5*K,244*K); ctx.fillRect(X(117),Y(244),5*K,244*K);
+  ctx.setLineDash([2*K,1.6*K]); ctx.strokeStyle=alpha(COL.black,0.55); ctx.lineWidth=0.5*K; ctx.beginPath(); ctx.moveTo(X(5),Y(CFG.dash)); ctx.lineTo(X(117),Y(CFG.dash)); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle=alpha(COL.black,0.55); ctx.font=`${Math.max(10,3.2*K)}px ${css('--mono')}`; ctx.fillText('start region',X(8),Y(CFG.dash)+4.2*K);
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  for(const d of DECOYS){ ctx.strokeStyle=COL.black; ctx.lineWidth=3*K; poly(ctx,d); ctx.stroke(); }
+  ctx.strokeStyle=COL.black; ctx.lineWidth=3*K; poly(ctx,LINE); ctx.stroke();
+  if(view.method==='friend'){ ctx.setLineDash([1.5*K,1.5*K]); ctx.strokeStyle=alpha(COL.friend,0.7); ctx.lineWidth=0.6*K; ctx.beginPath(); ctx.moveTo(X(VIRTUAL.a.x),Y(VIRTUAL.a.y)); ctx.lineTo(X(VIRTUAL.b.x),Y(VIRTUAL.b.y)); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle=COL.friend; ctx.fillText('FRONT = 110 reference (assumed flat)',X(31),Y(VIRTUAL.a.y)-1.2*K); }
+  for(const w of WALLS){ ctx.strokeStyle=w.tall?COL.wall:COL['wall-low']; ctx.lineWidth=(w.tall?2.2:1.6)*K; ctx.lineCap='butt'; ctx.beginPath(); ctx.moveTo(X(w.a.x),Y(w.a.y)); ctx.lineTo(X(w.b.x),Y(w.b.y)); ctx.stroke(); }
+  // targets
+  const tgt=(x,y,c,label)=>{ ctx.strokeStyle=c; ctx.lineWidth=0.8*K; ctx.beginPath(); ctx.arc(X(x),Y(y),3*K,0,7); ctx.stroke(); ctx.fillStyle=c; ctx.beginPath(); ctx.arc(X(x),Y(y),1*K,0,7); ctx.fill();
+    ctx.font=`600 ${Math.max(11,4*K)}px ${css('--display')}`; ctx.fillText(label,X(x)+4*K,Y(y)-3*K); };
+  tgt(CFG.T1x,CFG.T1y,COL.t1,'T1'); tgt(T2.x,T2.y,COL.t2,'T2');
+  const st=view.st; if(!st) return;
+  const mc=view.method==='ours'?COL.ours:COL.friend;
+  ctx.strokeStyle=alpha(mc,0.85); ctx.lineWidth=0.7*K; ctx.lineCap='round'; poly(ctx,st.trail); ctx.stroke();
+  if(st.home){ ctx.fillStyle=mc; const hx=X(st.home.x), hy=Y(st.home.y), r=2*K; ctx.beginPath(); ctx.moveTo(hx,hy-r); ctx.lineTo(hx+r,hy); ctx.lineTo(hx,hy+r); ctx.lineTo(hx-r,hy); ctx.closePath(); ctx.fill(); }
+  if(view.beams) drawBeams(ctx,st,mc);
+  drawRobot(ctx,st.pose,mc,st);
+  if(st.drop){ ctx.fillStyle=COL.ink; ctx.strokeStyle=COL.board; ctx.lineWidth=0.5*K; ctx.beginPath(); ctx.arc(X(st.drop.x),Y(st.drop.y),1.6*K,0,7); ctx.fill(); ctx.stroke(); }
+}
+function drawBeams(ctx,st,mc){ const sp=sensorPoses(st.pose);
+  for(const k of ['F','L','R']){ const s=sp[k], v=st.readings[k], d=v===null?45:v, b=beamHalf(d);
+    ctx.fillStyle=alpha(mc,v===null?0.06:0.14); ctx.beginPath(); ctx.moveTo(X(s.x),Y(s.y)); ctx.arc(X(s.x),Y(s.y),d*K,-(s.h+b),-(s.h-b)); ctx.closePath(); ctx.fill();
+    if(v!==null){ ctx.strokeStyle=alpha(mc,0.9); ctx.lineWidth=0.5*K; ctx.beginPath(); ctx.arc(X(s.x),Y(s.y),d*K,-(s.h+b),-(s.h-b)); ctx.stroke(); } } }
+function drawRobot(ctx,p,mc,st){ ctx.save(); ctx.translate(X(p.x),Y(p.y)); ctx.rotate(-p.h); ctx.scale(K,K);
+  // local: +x forward, +y = robot's right (canvas y down)
+  ctx.fillStyle=COL.robot; ctx.fillRect(-RB.rear,-RB.body,RB.rear+RB.front,2*RB.body);
+  ctx.fillStyle=COL['robot-hi']; ctx.fillRect(-RB.rear+1,-RB.body+1,RB.rear+RB.front-2,2*RB.body-2);
+  ctx.fillStyle=COL.black; ctx.fillRect(-3.5,-RB.half,7,RB.half-RB.body+0.2); ctx.fillRect(-3.5,RB.body-0.2,7,RB.half-RB.body+0.2);
+  ctx.fillStyle=mc; ctx.fillRect(RB.front-1.2,-2.5,1.6,5); ctx.fillRect(RB.sideFwd-2.5,-RB.sideLat,5,1.6); ctx.fillRect(RB.sideFwd-2.5,RB.sideLat-1.6,5,1.6);
+  ctx.fillStyle='#E9E4D8'; ctx.beginPath(); ctx.arc(RB.front-0.4,-RB.irLat,0.8,0,7); ctx.arc(RB.front-0.4,RB.irLat,0.8,0,7); ctx.fill();
+  ctx.strokeStyle=COL.t2; ctx.lineWidth=0.9; ctx.beginPath(); ctx.moveTo(RB.front,0); ctx.lineTo(RB.front+RB.ptr,0); ctx.stroke();
+  if(!st.drop){ ctx.fillStyle=COL.t1; ctx.beginPath(); ctx.arc(0,0,1.5,0,7); ctx.fill(); }
+  ctx.strokeStyle='#E9E4D8'; ctx.lineWidth=0.6; ctx.beginPath(); ctx.moveTo(5,0); ctx.lineTo(12,0); ctx.lineTo(10,-1.8); ctx.moveTo(12,0); ctx.lineTo(10,1.8); ctx.stroke();
+  ctx.restore(); }
+
+function drawScan(){
+  const cv=$('#scan'), f=fit(cv), ctx=cv.getContext('2d'), d=f.dpr; ctx.setTransform(d,0,0,d,0,0);
+  const W=f.cw, H=f.ch, l=34, r=8, t=8, b=22, x0=l, x1=W-r, y0=t, y1=H-b, ymin=80, ymax=140;
+  const sx=a=>x0+(a+180)/360*(x1-x0), sy=v=>y1-(clamp(v,ymin,ymax)-ymin)/(ymax-ymin)*(y1-y0);
+  ctx.clearRect(0,0,W,H); ctx.font=`11px ${css('--mono')}`; ctx.fillStyle=COL.muted;
+  const band=view.method==='ours'?4:1.5;
+  ctx.fillStyle=alpha(view.method==='ours'?COL.ours:COL.friend,0.12); ctx.fillRect(x0,sy(SUM0+band),x1-x0,sy(SUM0-band)-sy(SUM0+band));
+  ctx.strokeStyle=COL.rule; ctx.lineWidth=1; ctx.beginPath();
+  for(const v of [80,99,120,140]){ ctx.moveTo(x0,sy(v)); ctx.lineTo(x1,sy(v)); } ctx.stroke();
+  ctx.fillStyle=COL.muted; for(const v of [80,99,120,140]) ctx.fillText(v,4,sy(v)+4);
+  for(const a of [-180,-90,0,90,180]){ ctx.fillText(a===0?'0° up‑field':(a+'°'),clamp(sx(a)-(a===0?30:12),x0-6,x1-40),H-6); ctx.strokeStyle=COL.rule; ctx.beginPath(); ctx.moveTo(sx(a),y1); ctx.lineTo(sx(a),y1+4); ctx.stroke(); }
+  // preview: what L+R reads at every heading from the start spot (no noise)
+  if(view.start){ ctx.strokeStyle=COL.muted; ctx.lineWidth=1.4; ctx.beginPath(); let pen=false;
+    for(let a=-180;a<=180;a+=1){ const p={x:view.start.x,y:view.start.y,h:Math.PI/2+a*D2R}; const sp=sensorPoses(p); const L=sonarClean(sp.L), R=sonarClean(sp.R);
+      if(L===null||R===null||L+R>ymax+20){ pen=false; continue; } const X_=sx(a), Y_=sy(L+R); if(pen) ctx.lineTo(X_,Y_); else ctx.moveTo(X_,Y_); pen=true; } ctx.stroke(); }
+  const st=view.st; if(!st) return;
+  const mc=view.method==='ours'?COL.ours:COL.friend;
+  for(const s of st.scan){ if(s.sum===null) continue; const a=R2D*wrap(s.h-Math.PI/2); ctx.fillStyle=s.hit?mc:alpha(mc,0.35); ctx.beginPath(); ctx.arc(sx(a),sy(s.sum),s.hit?2.6:1.8,0,7); ctx.fill(); }
+  if(st.scanMark!==null){ const a=R2D*wrap(st.scanMark-Math.PI/2); ctx.strokeStyle=mc; ctx.lineWidth=1.5; ctx.setLineDash([4,3]); ctx.beginPath(); ctx.moveTo(sx(a),y0); ctx.lineTo(sx(a),y1); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle=mc; const label=view.method==='ours'?'centre of the zone':'stopped here'; const tx=sx(a)+5; ctx.fillText(label,tx+ctx.measureText(label).width>x1?sx(a)-5-ctx.measureText(label).width:tx,y0+10); } }
+
+function drawCloseup(){
+  const cv=$('#closeup'), f=fit(cv), ctx=cv.getContext('2d'), d=f.dpr; ctx.setTransform(d,0,0,d,0,0);
+  const W=f.cw, c=W/2, st=view.st; ctx.clearRect(0,0,W,W);
+  const far=st&&st.drop?Math.hypot(st.drop.x-CFG.T1x,st.drop.y-CFG.T1y):0, R=far>6.5?Math.ceil(far/5)*5+3:7, k=(W/2-6)/R;
+  ctx.fillStyle=COL.board; ctx.beginPath(); ctx.arc(c,c,W/2-2,0,7); ctx.fill();
+  ctx.strokeStyle=alpha(COL.black,0.35); ctx.lineWidth=1; for(const rr of [1,2,5,10,20,30]){ if(rr>R) break; ctx.beginPath(); ctx.arc(c,c,rr*k,0,7); ctx.stroke(); }
+  ctx.fillStyle=COL.t1; ctx.beginPath(); ctx.arc(c,c,3,0,7); ctx.fill();
+  if(st&&st.drop){ const x=clamp(c+(st.drop.x-CFG.T1x)*k,6,W-6), y=clamp(c-(st.drop.y-CFG.T1y)*k,6,W-6);
+    ctx.strokeStyle=COL.black; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(x,y,Math.max(4,1.6*k),0,7); ctx.stroke();
+    ctx.fillStyle=COL.black; ctx.beginPath(); ctx.arc(x,y,2.2,0,7); ctx.fill(); }
+  ctx.fillStyle=alpha(COL.black,0.6); ctx.font=`10px ${css('--mono')}`; ctx.fillText(`±${R} cm`,c-16,W-8); }
+
+/* ---------- single-run controller ---------- */
+const $=s=>document.querySelector(s);
+const view={method:'ours',st:null,gen:null,playing:false,speed:2,beams:true,start:null,sys:null,seed:1};
+function newStart(){ view.seed=(Math.random()*1e9)|0; const r=mulberry(view.seed); view.start=randomStart(r); view.sys=randomSys(r); resetRun(); }
+function resetRun(){ view.st=makeState(view.start,view.sys,view.seed^0x5bd1e995); view.gen=null; view.playing=false; $('#play').textContent='Run';
+  const st=view.st; read(st,'F'); read(st,'L'); read(st,'R'); st.t=0;
+  $('#pStep').textContent='Ready'; $('#pTitle').textContent='Press Run'; $('#pText').textContent='The robot is at a random spot and heading inside the start region. Pick a method, then press Run.';
+  $('#result').textContent='No drop yet.'; lastPhase=-2; renderAll(); }
+function* fullRun(st){ if(view.method==='ours'){ yield* runOurs(st); yield* lineAndT2(st,9); } else { yield* runFriend(st,'first',REPLAY.first); yield* lineAndT2(st,8); } st.finished=true; }
+let lastPhase=-2;
+function updatePanel(){ const st=view.st; if(!st) return; const ph=PH[view.method];
+  if(st.phase!==lastPhase&&st.phase>=0){ lastPhase=st.phase; const p=ph[st.phase]; $('#pStep').textContent=`Step ${st.phase+1} of ${ph.length}`; $('#pTitle').textContent=p[0]; $('#pText').textContent=p[1]; }
+  const fmt=v=>v===null||v===undefined?'no echo':v.toFixed(1); const r=st.readings;
+  $('#rF').textContent=fmt(r.F); $('#rL').textContent=fmt(r.L); $('#rR').textContent=fmt(r.R);
+  $('#rS').textContent=(r.L!==null&&r.R!==null)?(r.L+r.R).toFixed(1):'–';
+  $('#rH').textContent=(R2D*wrap(st.pose.h-Math.PI/2)).toFixed(1)+'°'; $('#rT').textContent=st.t.toFixed(1)+' s';
+  if(st.drop){ let s=`Item landed ${st.err.toFixed(1)} cm from T1 at ${st.tDrop.toFixed(1)} s.`; if(st.atT2) s+=` Pointer on T2 at ${st.t.toFixed(0)} s of 90.`; $('#result').textContent=s; } }
+function renderAll(){ drawField(); drawScan(); drawCloseup(); updatePanel(); }
+function tick(){ if(view.playing&&view.gen){ const st=view.st;
+    for(let i=0;i<view.speed;i++){ const r=view.gen.next(); if(r.done){ view.playing=false; $('#play').textContent='Run'; break; } }
+    if(view.beams&&view.st){ /* keep displayed readings fresh during schematic phases */ }
+    renderAll(); }
+  requestAnimationFrame(tick); }
+
+$('#play').addEventListener('click',()=>{ if(!view.gen||view.st.finished){ if(view.st&&view.st.finished) resetRun(); view.gen=fullRun(view.st); }
+  view.playing=!view.playing; $('#play').textContent=view.playing?'Pause':'Resume'; });
+$('#again').addEventListener('click',resetRun);
+$('#newstart').addEventListener('click',newStart);
+$('#speed').addEventListener('change',e=>view.speed=+e.target.value);
+$('#beams').addEventListener('change',e=>{view.beams=e.target.checked; renderAll();});
+for(const b of document.querySelectorAll('.seg button')) b.addEventListener('click',()=>{ view.method=b.dataset.m; for(const o of document.querySelectorAll('.seg button')) o.setAttribute('aria-pressed',String(o===b)); resetRun(); });
+
+/* ---------- Monte Carlo ---------- */
+const METHODS=[{key:'first',name:"Friend's method",col:'friend'},{key:'centre',name:'Friend + band-centre fix',col:'fix'},{key:'ours',name:'Our method',col:'ours'}];
+let MC=null, mcToken=0;
+function runMC(){ const token=++mcToken, N=200, base=(Math.random()*1e9)|0; const res={first:[],centre:[],ours:[]}; let i=0;
+  $('#stats tbody').innerHTML='<tr><td colspan="7">Running 0 / 200…</td></tr>';
+  const chunk=()=>{ if(token!==mcToken) return; const end=Math.min(N,i+8);
+    for(;i<end;i++){ const r=mulberry(base+i), start=randomStart(r), sys=randomSys(r);
+      for(const m of METHODS){ const st=makeState(start,sys,(base+i)*31+m.key.length);
+        const gen= m.key==='ours'?runOurs(st):runFriend(st,m.key,REPLAY[m.key]);
+        runToEnd(gen); res[m.key].push(st.drop?{dx:st.drop.x-CFG.T1x,dy:st.drop.y-CFG.T1y,e:st.err,t:st.tDrop}:{dx:NaN,dy:NaN,e:Infinity,t:NaN}); } }
+    if(i<N){ $('#stats tbody').innerHTML=`<tr><td colspan="7">Running ${i} / 200…</td></tr>`; setTimeout(chunk,0); }
+    else { MC=res; drawScatter(); fillStats(); } };
+  setTimeout(chunk,0); }
+function pct(a,p){ const b=a.filter(Number.isFinite).sort((x,y)=>x-y); if(!b.length) return NaN; return b[Math.min(b.length-1,Math.floor(p*(b.length-1)+0.5))]; }
+function fillStats(){ const rows=METHODS.map(m=>{ const r=MC[m.key], e=r.map(o=>o.e), n=e.length;
+  const share=c=>Math.round(100*e.filter(v=>v<=c).length/n)+' %', f=v=>Number.isFinite(v)?v.toFixed(1)+' cm':'–';
+  return `<tr><td><span class="dot" style="background:var(--${m.col})"></span>${m.name}</td><td>${f(pct(e,0.5))}</td><td>${f(pct(e,0.9))}</td><td>${f(Math.max(...e.filter(Number.isFinite)))}</td><td>${share(2)}</td><td>${share(5)}</td><td>${pct(r.map(o=>o.t),0.5).toFixed(0)} s</td></tr>`; }).join('');
+  $('#stats tbody').innerHTML=rows;
+  const mo=pct(MC.ours.map(o=>o.e),0.5), mf=pct(MC.first.map(o=>o.e),0.5);
+  $('#mcnote').textContent=`Every dot is one run's item position relative to T1 (centre). In this batch the median miss is ${mf.toFixed(1)} cm for the friend's method and ${mo.toFixed(1)} cm for ours. Runs that land outside the plot are drawn as arrows on the edge.`; }
+function drawScatter(){ const cv=$('#scatter'), f=fit(cv), ctx=cv.getContext('2d'), d=f.dpr; ctx.setTransform(d,0,0,d,0,0);
+  const W=f.cw, c=W/2; ctx.clearRect(0,0,W,W); if(!MC) return;
+  const p90=pct(MC.first.map(o=>o.e),0.9); const R=[10,15,20,30,40].find(v=>v>=p90*1.1)||40, k=(W/2-18)/R;
+  ctx.fillStyle=COL.board; ctx.fillRect(0,0,W,W);
+  ctx.strokeStyle=alpha(COL.black,0.25); ctx.lineWidth=1; ctx.font=`11px ${css('--mono')}`; ctx.fillStyle=alpha(COL.black,0.65);
+  for(const rr of [2,5,10,20,30,40]){ if(rr>R) break; ctx.beginPath(); ctx.arc(c,c,rr*k,0,7); ctx.stroke(); ctx.fillText(rr+' cm',c+rr*k*0.707+3,c-rr*k*0.707-3); }
+  ctx.beginPath(); ctx.moveTo(c,8); ctx.lineTo(c,W-8); ctx.moveTo(8,c); ctx.lineTo(W-8,c); ctx.stroke();
+  ctx.fillText('up‑field ↑',c+4,16);
+  for(const m of METHODS){ const col=COL[m.col];
+    for(const o of MC[m.key]){ if(!Number.isFinite(o.dx)) continue; let x=c+o.dx*k, y=c-o.dy*k; const out=Math.abs(o.dx)>R||Math.abs(o.dy)>R;
+      if(out){ const a=Math.atan2(-o.dy,o.dx), s=Math.min((W/2-8)/Math.abs(Math.cos(a)||1e-9),(W/2-8)/Math.abs(Math.sin(a)||1e-9)); x=c+Math.cos(-a)*s*1; y=c-Math.sin(-a)*s*1;
+        ctx.fillStyle=col; ctx.save(); ctx.translate(x,y); ctx.rotate(Math.atan2(y-c,x-c)); ctx.beginPath(); ctx.moveTo(5,0); ctx.lineTo(-4,-4); ctx.lineTo(-4,4); ctx.closePath(); ctx.fill(); ctx.restore(); continue; }
+      ctx.fillStyle=alpha(col,0.75); ctx.beginPath(); ctx.arc(x,y,m.key==='ours'?2.6:3,0,7); ctx.fill(); } }
+  ctx.fillStyle=COL.t1; ctx.beginPath(); ctx.arc(c,c,3.5,0,7); ctx.fill(); }
+$('#mcrun').addEventListener('click',runMC);
+$('#apply').addEventListener('click',()=>{ CFG.T1x=clamp(+$('#t1x').value||64,25,97); CFG.T1y=clamp(+$('#t1y').value||93,60,140); $('#t1x').value=CFG.T1x; $('#t1y').value=CFG.T1y; tuneAll(); resetRun(); runMC(); });
+
+/* ---------- boot ---------- */
+function onTheme(){ readColors(); renderAll(); if(MC) drawScatter(); }
+buildWorld(); readColors(); tuneAll(); newStart();
+new ResizeObserver(()=>{ renderAll(); if(MC) drawScatter(); }).observe(document.body);
+try{ matchMedia('(prefers-color-scheme: dark)').addEventListener('change',onTheme); }catch(e){}
+new MutationObserver(onTheme).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+if(document.fonts&&document.fonts.ready) document.fonts.ready.then(()=>renderAll());
+requestAnimationFrame(tick);
+runMC();
+</script>
