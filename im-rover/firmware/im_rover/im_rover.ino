@@ -27,6 +27,7 @@
 #include <Servo.h>
 #include <pico/time.h>
 #include <hardware/gpio.h>
+#include "robot_types.h"    // structs live here so the Arduino IDE's auto-prototypes can see them
 #include "field_map.h"      // the practice field in cm: walls, T1, T2, line route, start marks
 
 // =====================================================================================
@@ -105,8 +106,6 @@ const float T2_FRONT_TARGET    = 5.0;   // FRONT with the pointer held on T2 ('t
 
 // route table: positions are cm of line from the pickup point, measured at the IR sensors
 // (= encoder distance + AXLE_TO_FRONT). The print-out at the end of a run shows the real numbers.
-enum RouteAct : uint8_t { IGNORE_LEFT, IGNORE_RIGHT, SLOW, SCRIPT_TURN };
-struct RouteRule { float from, to; RouteAct act; float preCm, turnDeg; };
 const RouteRule ROUTE[] = {
   { RT_OVAL_END - 12, RT_OVAL_END + 13, IGNORE_LEFT,  0, 0 },  // oval's loose end ~9 cm left of the line
   { RT_PASSAGE_IN,    RT_PASSAGE_OUT,   SLOW,         0, 0 },  // narrow passage
@@ -241,7 +240,6 @@ void haltForever() {
 // =====================================================================================
 // 100 Hz control tick: wheel speeds, wheel speed PI, odometry, stall watch
 // =====================================================================================
-struct Wheel { float target = 0, vel = 0, integ = 0, last = 0; };
 Wheel wl, wr;
 bool  speedMode = false;
 uint32_t lastTickUs = 0;
@@ -397,7 +395,6 @@ float measureX() {                              // both side walls are square to
 // =====================================================================================
 // localisation: spin until the box pattern, take its middle
 // =====================================================================================
-struct Sig { bool found = false; bool back = false; float center = 0, L = NAN, R = NAN, F = NAN; };
 
 Sig scanForSignature() {
   Sig out;
