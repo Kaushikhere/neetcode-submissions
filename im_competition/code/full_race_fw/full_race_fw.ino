@@ -29,6 +29,11 @@
 // 1 = Standalone battery mode (calibrates when still -> waits for 12V switch -> Full Race)
 #define AUTO_START_ON_MOTOR_SWITCH 1
 
+// 1 = TEST: put the robot on the line at A (facing up the right side), power on:
+//     3 s countdown -> Phase 5 line follow -> end check -> Phase 6 T2. No 12V-switch wait.
+// 0 = normal (full race / menu as above)
+#define TEST_LINE_AND_T2 1
+
 // 1 = Use Core 1 MPU6050 6-axis IMU with auto I2C recovery & encoder failover
 #define USE_GYRO 1
 
@@ -271,7 +276,14 @@ const int   LF_SETTLE_PWM        = 112;
 const float LF_CURVE_DEG         = 25.0f;  // Heading change in last ~7.5 cm -> curve
 const float LF_CURVE_SPEED       = 0.80f;
 const unsigned long LF_LOST_GRACE_MS = 40UL;
-const float LF_SEARCH_DEG        = 170.0f;
+const float LF_SEARCH_DEG        = 150.0f; // max pivot each way: the line BEHIND (~180) is never reached
+
+// End of line: nothing behind is ever accepted near the end
+const float LF_END_TURN_DEG      = 195.0f; // total LEFT turn since the line start that means "hairpin done"
+                                           // (A -> F turns ~260 deg left; before the hairpin at most ~130)
+const float LF_END_CHECK_DEG     = 45.0f;  // end check: look this far left and right (line ahead only)
+const float LF_END_CREEP_CM      = 5.0f;   // ... then creep straight this far and look again
+const float LF_END_WALL_CM       = 12.0f;  // line ends with a wall this close ahead = end, no pivoting
 
 // Wall safety (raw ultrasonic cm)
 const float LF_NEAR_WALL_CM      = 9.0f;
@@ -2898,6 +2910,12 @@ bool runPhase5_FollowLineAndMaze(bool standaloneTest = false) {
   float settleUntilOdo = -1.0f;
 
   float searchHdg0 = 0.0f;
+  int   endChk = 0;                    // end-of-line check step (0 = not checking)
+  float endCreep0 = 0.0f;
+  int   endStepNo = -1; float endStepRel = 0.0f; unsigned long endStepMs = 0;
+  float srchStuckHdg = 0.0f; unsigned long srchStuckMs = 0;
+  float lastOnLineHdg = 0.0f;          // heading the last time an IR saw the line
+  bool  endZoneNow = false;            // decided once, when the line is lost
   bool  searching  = false;
   unsigned long searchStartMs = 0;
 
@@ -2941,7 +2959,7 @@ bool runPhase5_FollowLineAndMaze(bool standaloneTest = false) {
 #if USE_FRONT_STOP
     if (lfFrontHits >= 2) {
       why = "obstacle in front";
-      if (hairpinDone) reachedPointF = true;
+      if (hairpinDone || (lastOnLineHdg - initHdg >= LF_END_TURN_DEG)) reachedPointF = true;
       break;
     }
 #endif
@@ -3031,8 +3049,10 @@ bool runPhase5_FollowLineAndMaze(bool standaloneTest = false) {
     const char *mode = "LINE";
 
     if (!lost) {
+      lastOnLineHdg = hdgNow;
       if (lostStartMs != 0) {
         lostStartMs = 0;
+        if (endChk != 0) { Serial.println(F("  [END CHECK] more line ahead -> following on")); endChk = 0; }
         prevE = e;
         dTerm = 0.0f;
         hardStartMs = now;
@@ -3086,6 +3106,9 @@ bool runPhase5_FollowLineAndMaze(bool standaloneTest = false) {
         lostStartMs  = now;
         lostHdg0     = hdgNow;
         lostDist0    = getEncoderDistCm();
+        // end of the line only if the robot had ALREADY turned the hairpin while
+        // on the line (search pivots do not count)
+        endZoneNow   = hairpinDone || (lastOnLineHdg - initHdg >= LF_END_TURN_DEG);
         {   // line direction = average heading over the last ~9 cm ON the line
           float sum = 0.0f;
           for (int k = 0; k < 6; k++) sum += dRing[(dIdx - k + DRING) % DRING];
@@ -3106,15 +3129,67 @@ bool runPhase5_FollowLineAndMaze(bool standaloneTest = false) {
       }
 
 #if STOP_AT_LINE_END
-      if (hairpinDone && (fwdOdo - hairpinOdo >= LF_LINE_END_MIN_CM) && (now - lostStartMs >= LF_LINE_END_LOST_MS)) {
-        why = "END OF LINE after hairpin (Point F)";
-        reachedPointF = true;
-        gEndByLoss = true;
-        gEndOvershootCm = getEncoderDistCm() - lostDist0;
-        break;
-      }
+      // ---- END CHECK (after the hairpin): is there any line AHEAD? ----
+      // look +/-45 deg, creep 5 cm straight, look +/-45 again. The line behind
+      // (180 deg away) can never be found this way, so no U-turn.
+      if (endZoneNow && (now - lostStartMs >= LF_LOST_GRACE_MS)) {
+        if (endChk == 0) {
+          endChk = 1;
+          driveLineMotors(0, 0);
+          delay(LF_SEARCH_BRAKE_MS);
+          if (lfFrontF < LF_END_WALL_CM) {
+            endChk = 7;                                   // wall right ahead: this IS the end, no pivoting
+            Serial.println(F("  [END CHECK] line lost with a wall ahead -> end of line"));
+          } else {
+            Serial.println(F("  [END CHECK] line lost after the hairpin -> looking AHEAD only"));
+          }
+          endStepMs = millis(); endStepRel = getHeadingDeg() - lostHdg0; endStepNo = endChk;
+        }
+        float rel = getHeadingDeg() - lostHdg0;          // + = turned left of the line heading
+        // a turn that is not turning (blocked by a wall) gives up after 0.5 s
+        if (endChk != endStepNo || fabsf(rel - endStepRel) > 1.0f) { endStepNo = endChk; endStepRel = rel; endStepMs = millis(); }
+        else if (endChk != 4 && millis() - endStepMs > 500UL) {
+          if (endChk == 3 || endChk == 7) rel = 0.0f;     // cannot turn back: accept where it is
+          else endChk++;
+          endStepNo = -1;
+        }
+        int pf = (int)(LF_SPIN_FWD * 0.85f), pr = (int)(LF_SPIN_REV * 0.85f);
+        mode = "ENDCHK";
+        cmdL = 0; cmdR = 0;
+        if (endChk == 1 || endChk == 5) {                 // look left
+          if (rel >= LF_END_CHECK_DEG || lfSideL < LF_SPIN_WALL_CM) endChk++;
+          else { cmdL = -pr; cmdR = pf; }
+        }
+        if (endChk == 2 || endChk == 6) {                 // look right
+          if (rel <= -LF_END_CHECK_DEG || lfSideR < LF_SPIN_WALL_CM) endChk++;
+          else { cmdL = pf; cmdR = -pr; }
+        }
+        if (endChk == 3 || endChk == 7) {                 // back to the line heading
+          if (fabsf(rel) <= 3.0f) {
+            if (endChk == 3) { endChk = 4; endCreep0 = getEncoderDistCm(); }
+            else {
+              driveLineMotors(0, 0);
+              why = "END OF LINE (nothing ahead) -> T2";
+              reachedPointF   = true;
+              gEndByLoss      = true;
+              gEndOvershootCm = getEncoderDistCm() - lostDist0;
+              break;
+            }
+          } else {
+            int sp = (fabsf(rel) < 12.0f) ? 95 : pf;
+            if (rel > 0.0f) { cmdL = sp; cmdR = -sp; } else { cmdL = -sp; cmdR = sp; }
+          }
+        }
+        if (endChk == 4) {                                // creep straight ahead, heading held
+          if (getEncoderDistCm() - endCreep0 >= LF_END_CREEP_CM || lfFrontF < LF_FRONT_STOP_CM + 4.0f) endChk = 5;
+          else {
+            float c = constrain(4.0f * rel, -30.0f, 30.0f); // turned left -> left wheel faster
+            cmdL = (int)(118.0f + c);
+            cmdR = (int)(118.0f - c);
+          }
+        }
+      } else
 #endif
-
       if (now - lostStartMs < LF_LOST_GRACE_MS) {
         cmdL = lastSignedL; cmdR = lastSignedR; mode = "GRACE";
       } else if (!searching && !(lostNearWall || nearWall) && (now - lostStartMs < LF_LOST_GRACE_MS + LF_SEARCH_BRAKE_MS)) {
@@ -3139,6 +3214,9 @@ bool runPhase5_FollowLineAndMaze(bool standaloneTest = false) {
         float rel      = hdgNow - lostHdg0; // + = turned left
         float progress = (searchDir < 0) ? rel : -rel;
         bool wallAhead = (searchDir < 0) ? (lfSideL < LF_SPIN_WALL_CM) : (lfSideR < LF_SPIN_WALL_CM);
+        // pivot blocked (not turning for 0.6 s) counts like a wall on that side
+        if (fabsf(hdgNow - srchStuckHdg) > 1.0f || srchStuckMs == 0) { srchStuckHdg = hdgNow; srchStuckMs = now; }
+        else if (now - srchStuckMs > 600UL) { wallAhead = true; srchStuckMs = 0; }
         if (progress >= LF_SEARCH_DEG || wallAhead) {
           if (searchPhase == 0) {
             searchPhase = 1;
@@ -3406,7 +3484,15 @@ void setup() {
   lastHeartbeatMs   = millis();
 #endif
 
-#if AUTO_START_ON_MOTOR_SWITCH == 1
+#if TEST_LINE_AND_T2
+  Serial.println(F("[TEST] Line -> T2 in 3 s (robot on the line at A, facing up)"));
+  for (int i = 3; i > 0; i--) { Serial.println(i); delay(1000); }
+  resetHeadingAndEncoders(true);
+  raceTimerActive = false;
+  if (runPhase5_FollowLineAndMaze(false)) runPhase6_PinpointT2();
+  stopMotors();
+  releaseMotors();
+#elif AUTO_START_ON_MOTOR_SWITCH == 1
   waitForMotorSwitchOn();
   runFullCompetition();
   releaseMotors();
@@ -3416,7 +3502,7 @@ void setup() {
 unsigned long lastMenuMs = 0;
 
 void loop() {
-#if AUTO_START_ON_MOTOR_SWITCH == 0
+#if AUTO_START_ON_MOTOR_SWITCH == 0 && !TEST_LINE_AND_T2
   digitalWrite(LED_BUILTIN, (millis() / 300) % 2);
   if (millis() - lastMenuMs >= 4500UL) { lastMenuMs = millis(); printMenu(); }
 

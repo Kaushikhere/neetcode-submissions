@@ -51,6 +51,7 @@ bool collide(double x,double y,double th){
 int wheelDir(int a,int b,bool left){ // left: IN3 H IN4 L = fwd ; right: IN1 L IN2 H = fwd
   if(left){ if(a&&!b) return 1; if(!a&&b) return -1; return 0; } else { if(!a&&b) return 1; if(a&&!b) return -1; return 0; } }
 void physics(double dt){
+  if(simVerbose && (simUs%500000)<1000) printf("  @%.1fs pos (%.1f,%.1f) h %.0f\n", simUs/1e6, rx, ry, fmod(rth*180/PI+720,360)); // POSLOG
   double tgt[2]; double vmax[2]={40.0, 40.0/0.86}; double* v[2]={&vL,&vR};
   for(int s=0;s<2;s++){
     int en = s==0? enVal[L_ENB] : enVal[R_ENA];
@@ -89,6 +90,7 @@ int main(int argc,char**argv){
   walls={{0,0,BOX_W,0},{0,0,0,58},{BOX_W,0,BOX_W,58},
     {22.4,190.6,48.7,139.7},{58.5,209.6,85.8,156.8},{19.1,172.3,29.2,177.5},{34.3,167.5,70.6,186.2},{43.8,149.3,80.0,168.0},{88.1,215.8,106.1,181.0},{95.7,201.2,109.3,208.2}};
   double P[][2]={{94.0,114.8},{65.2,123.3},{42.1,125.9},{19.0,122.8},{16.2,108.3},{20.6,91.2},{28.4,78.6},{38.7,68.9},{52.1,63.7},{65.0,63.4},{77.8,66.4},{85.9,73.4},{91.9,83.7},{98.9,101.2},{102.9,118.7},{105.2,134.1},{104.7,146.0},{102.3,157.2},{97.8,164.9},{90.1,177.5},{80.0,198.8},{73.4,214.0},{70.5,224.5},{67.5,228.9},{58.9,229.8},{44.2,224.6},{18.5,213.7},{32.9,209.1},{50.5,202.0}};
+  if(getenv("ROOM_AT_F")){ walls[4].ax=62.2; walls[4].ay=202.4; }   // W2 top end 8 cm shorter: room at the line end
   for(int i=0;i<28;i++) lines.push_back({P[i][0],P[i][1],P[i+1][0],P[i+1][1]});
   { double pdx=getenv("PDX")?atof(getenv("PDX")):0, pdy=getenv("PDY")?atof(getenv("PDY")):0, pth=getenv("PTH")?atof(getenv("PTH"))*PI/180:0;
     auto tf=[&](double&x,double&y){ double dx=x-T2X, dy=y-T2Y; x=T2X+dx*cos(pth)-dy*sin(pth)+pdx; y=T2Y+dx*sin(pth)+dy*cos(pth)+pdy; };
