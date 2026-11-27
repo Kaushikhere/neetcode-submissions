@@ -188,6 +188,24 @@ const float MAX_HIGHWAY_SEEK_CM  = 58.0f;
 const float T2_PIVOT_RIGHT_DEG   = 40.0f;
 const float T2_PARK_STOP_CM      = 5.5f;
 
+// --- RAIL-LOCK T2 DOCKING (Phase 6) ---
+// Map geometry relative to the LINE END F (line frame: u = along the last line
+// segment, v = to its left). From the field map: last segment heading -22 deg,
+// pocket axis -62.7 deg, T2 9.0 cm ahead and 20.6 cm right of F.
+const float LINE_END_TO_AXIS_DEG = -40.7f; // pocket axis relative to the last line segment
+const float T2_U_CM              =   9.0f;
+const float T2_V_CM              = -20.6f;
+const float AIM_BEFORE_T2_CM     =   8.0f; // first aim at this point on the centre line
+const float IR_FWD_CM            =   7.5f; // IR row ahead of the axle
+const float RAIL_SEEN_CM         =  30.0f; // side reading below this = a pocket rail
+const float RAIL_LAT_GAIN        =   1.8f; // deg of steer per cm off centre
+const float RAIL_LAT_MAX_DEG     =  14.0f;
+const float RAIL_CENTER_TOL_CM   =   1.5f; // re-entry if parked further off centre
+const float RAIL_HALF_GAP_CM     =  19.6f; // pocket centre line to the inner face of either rail
+float gLineHdgAtEnd   = 0.0f;              // gyro heading of the last line segment
+float gEndOvershootCm = 0.0f;              // driven past the line end before stopping
+bool  gEndByLoss      = false;
+
 // ============================================================================
 // 3. GYRO-REGULATED 360 SCAN, VELOCITY-PROFILED TURNS & 200 Hz PID TUNING
 // ============================================================================
@@ -3068,6 +3086,11 @@ bool runPhase5_FollowLineAndMaze(bool standaloneTest = false) {
         lostStartMs  = now;
         lostHdg0     = hdgNow;
         lostDist0    = getEncoderDistCm();
+        {   // line direction = average heading over the last ~9 cm ON the line
+          float sum = 0.0f;
+          for (int k = 0; k < 6; k++) sum += dRing[(dIdx - k + DRING) % DRING];
+          gLineHdgAtEnd = sum / 6.0f;
+        }
         searchPhase  = 0;
         lostNearWall = nearWall;
         if (KEEP_LEFT_AT_FORK && lastJunctionMs != 0 && (now - lastJunctionMs < 500UL)) {
@@ -3086,6 +3109,8 @@ bool runPhase5_FollowLineAndMaze(bool standaloneTest = false) {
       if (hairpinDone && (fwdOdo - hairpinOdo >= LF_LINE_END_MIN_CM) && (now - lostStartMs >= LF_LINE_END_LOST_MS)) {
         why = "END OF LINE after hairpin (Point F)";
         reachedPointF = true;
+        gEndByLoss = true;
+        gEndOvershootCm = getEncoderDistCm() - lostDist0;
         break;
       }
 #endif
@@ -3148,6 +3173,12 @@ bool runPhase5_FollowLineAndMaze(bool standaloneTest = false) {
   }
 
   stopMotors(60);
+  if (!gEndByLoss) {                       // ended another way: line direction from the last ~9 cm
+    float sum = 0.0f;
+    for (int k = 0; k < 6; k++) sum += dRing[(dIdx - k + DRING) % DRING];
+    gLineHdgAtEnd = sum / 6.0f;
+    gEndOvershootCm = 0.0f;
+  }
   Serial.print(F("[Phase 5] stopped: ")); Serial.print(why);
   Serial.print(F(" | time "));            Serial.print((millis() - t0) * 0.001f, 1);
   Serial.print(F(" s | fwdOdo "));        Serial.print(fwdOdo, 0); Serial.println(F(" cm"));
@@ -3159,48 +3190,136 @@ bool runPhase5_FollowLineAndMaze(bool standaloneTest = false) {
 // ============================================================================
 // 15. PHASE 6: PINPOINT_T2 + RAIL CENTERING
 // ============================================================================
+// Drive toward aimHdg until both rails are seen, then hold the pocket centre line
+// with the side ultrasonics (and learn the rails' true direction from how the
+// centre offset changes), stop with the front ultrasonic. Returns the final
+// centre offset (+ = left of centre), or 99 if the rails were never seen.
+float railLockDrive(float aimHdg, float &axisHdg, float maxCm) {
+  const float D2R = (float)M_PI / 180.0f;
+  long l0, r0; readEncoders(l0, r0);
+  setLeftDir(1); setRightDir(1);
+  bool  railsSeen = false;
+  float posLeft = 99.0f, winS = 0.0f, winPos = 0.0f; bool winSet = false;
+  int   stopHits = 0, slot = 0;
+  float dL = 99.0f, dR = 99.0f, dF = 99.0f;
+  unsigned long t0 = millis(), lastUs = 0;
+  while (!timeUp() && millis() - t0 < 9000UL) {
+    unsigned long now = millis();
+    long l, r; readEncoders(l, r);
+    float s = 0.5f * ((float)(l - l0) / TICKS_PER_CM_L + (float)(r - r0) / TICKS_PER_CM_R);
+    if (s >= maxCm) break;
+    if (now - t0 > 300UL && getImuJerkPeakMg() > IMPACT_JERK_MG) { Serial.println(F("  [Rail-Lock] bump -> stop")); break; }
+
+    if (now - lastUs >= 22UL) {               // L, F, R, F ... one sensor per slot
+      lastUs = now;
+      if      (slot == 0) dL = readUltrasonicSingle(L_TRIG, L_ECHO, 3500UL, true);
+      else if (slot == 2) dR = readUltrasonicSingle(R_TRIG, R_ECHO, 3500UL, true);
+      else {
+        dF = readUltrasonicSingle(F_TRIG, F_ECHO, 6000UL, true);
+        if (dF <= T2_PARK_STOP_CM) { if (++stopHits >= 2) break; } else stopHits = 0;
+      }
+      slot = (slot + 1) % 4;
+      bool seeL = dL < RAIL_SEEN_CM, seeR = dR < RAIL_SEEN_CM;
+      bool both = seeL && seeR;
+      if (seeL || seeR) {                     // one rail is enough: the pocket width is known
+        float fromL = RAIL_HALF_GAP_CM - (dL + cal.sideOffsetL);   // + = left of centre
+        float fromR = (dR + cal.sideOffsetR) - RAIL_HALF_GAP_CM;
+        posLeft = both ? 0.5f * (fromL + fromR) : (seeL ? fromL : fromR);
+        if (!railsSeen) { railsSeen = true; Serial.print(F("  [Rail-Lock] rails seen, offset ")); Serial.println(posLeft, 1); }
+        // learn the rails' direction: offset change per cm driven
+        if (!both) { winSet = false; }
+        else if (!winSet) { winSet = true; winS = s; winPos = posLeft; }
+        else if (s - winS >= 4.0f) {
+          float slope = (posLeft - winPos) / (s - winS);          // + = drifting left
+          if (fabsf(slope) < 0.5f) {
+            float railsHdg = getHeadingDeg() - asinf(slope) / D2R;
+            axisHdg = 0.7f * axisHdg + 0.3f * railsHdg;
+          }
+          winS = s; winPos = posLeft;
+        }
+      }
+    }
+
+    float target = railsSeen ? axisHdg - constrain(RAIL_LAT_GAIN * posLeft, -RAIL_LAT_MAX_DEG, RAIL_LAT_MAX_DEG)
+                             : aimHdg;
+    float err  = getHeadingDeg() - target;                   // + = pointing left of target
+    float corr = constrain(6.0f * err + 0.4f * getGyroRateDps(), -45.0f, 45.0f);
+    int base = (dF < T2_PARK_STOP_CM + 9.0f) ? 112 : 130;
+    setMotorPWM(constrain((int)roundf((float)base + corr), 88, 200),
+                constrain((int)roundf(((float)base - corr) * RIGHT_FF), 78, 190));
+    delay(3);
+  }
+  stopMotors(60);
+  Serial.print(F("  [Rail-Lock] stop: L=")); Serial.print(dL, 1); Serial.print(F(" R=")); Serial.print(dR, 1);
+  Serial.print(F(" F=")); Serial.println(dF, 1);
+  return railsSeen ? posLeft : 99.0f;
+}
+
+float raceSecondsLeft() {
+  if (!raceTimerActive) return 999.0f;
+  return ((float)HARD_STOP_MS - (float)(millis() - runStartMs)) * 0.001f;
+}
+
 void runPhase6_PinpointT2() {
   if (timeUp()) return;
-  Serial.println(F("[Phase 6] PINPOINT_T2: clearing mouth -> 40 deg right -> park!"));
+  const float D2R = (float)M_PI / 180.0f;
+  Serial.println(F("[Phase 6] RAIL-LOCK T2: exact line-end pose -> aim on centre line -> rail lock -> front stop"));
+  stopMotors(40);
+  delay(60);
 
-  delay(80);
-  if (readUltrasonicMedian(F_TRIG, F_ECHO, 3) > 14.0f) {
-    driveStraightCm(4.5f, true, nullptr, true, nullptr, false, 0.0f, 8.0f);
-  }
-  pivotRelative(-T2_PIVOT_RIGHT_DEG, true);
-
-  long l0, r0;
-  readEncoders(l0, r0);
-  int stopHits = 0;
-  unsigned long dockStartMs = millis();
-
-  while (!timeUp() && (millis() - dockStartMs < 7000UL)) {
-    long curL, curR;
-    readEncoders(curL, curR);
-    float movedCm = 0.5f * ((float)(curL - l0) / TICKS_PER_CM_L + (float)(curR - r0) / TICKS_PER_CM_R);
-    if (movedCm >= 28.0f) break;
-
-    float dL = readUltrasonicSingle(L_TRIG, L_ECHO, 3000UL, true);
-    delay(12);
-    float dF = readUltrasonicSingle(F_TRIG, F_ECHO, 5500UL, true);
-    delay(12);
-    float dR = readUltrasonicSingle(R_TRIG, R_ECHO, 3000UL, true);
-
-    if (dF <= T2_PARK_STOP_CM) { if (++stopHits >= 2) break; }
-    else stopHits = 0;
-
-    int wallCorr = 0;
-    if (dL < 28.0f && dR < 28.0f)  wallCorr = constrain((int)roundf((dR - dL) * 4.5f), -32, 32);
-    else if (dR < 22.0f)           wallCorr = constrain((int)roundf((dR - 9.5f) * 4.5f), -32, 32);
-    else if (dL < 22.0f)           wallCorr = constrain((int)roundf((9.5f - dL) * 4.5f), -32, 32);
-
-    int base = (dF < 14.0f) ? 122 : 140;
-    setSignedMotors(constrain(base + wallCorr, 95, 210),
-                    constrain(base - wallCorr, 95, 210));
+  // 1. Back up the overshoot: IRs back on the line end F
+  if (gEndByLoss && gEndOvershootCm > 0.8f && gEndOvershootCm < 25.0f) {
+    Serial.print(F("  [Line End] backing ")); Serial.print(gEndOvershootCm, 1); Serial.println(F(" cm onto F"));
+    driveStraightCm(-gEndOvershootCm, false, nullptr, true);
   }
 
+  // 2. Pose in the line frame: IRs on F, robot angle to the line from the gyro
+  float hLine  = gLineHdgAtEnd;
+  float axisHdg = hLine + LINE_END_TO_AXIS_DEG;
+  float rel    = (getHeadingDeg() - hLine) * D2R;
+  float axU    = -IR_FWD_CM * cosf(rel), axV = -IR_FWD_CM * sinf(rel);
+  float aDir   = LINE_END_TO_AXIS_DEG * D2R;
+  float pU     = T2_U_CM - AIM_BEFORE_T2_CM * cosf(aDir);
+  float pV     = T2_V_CM - AIM_BEFORE_T2_CM * sinf(aDir);
+  float aimHdg = hLine + atan2f(pV - axV, pU - axU) / D2R;
+  Serial.print(F("  [Aim] line hdg ")); Serial.print(hLine, 1);
+  Serial.print(F(" | pocket axis ")); Serial.print(axisHdg, 1);
+  Serial.print(F(" | aim ")); Serial.println(aimHdg, 1);
+  if (!turnToHeading(aimHdg, true)) return;
+
+  // 3. Drive in: aim, then rail lock, stop with the front ultrasonic
+  float off = railLockDrive(aimHdg, axisHdg, 45.0f);
+
+  // 4. Still off centre? Back out 10 cm along the axis and come in again (once)
+  if (!timeUp() && raceSecondsLeft() > 9.0f && off != 99.0f && fabsf(off) > RAIL_CENTER_TOL_CM) {
+    Serial.print(F("  [Rail-Lock] parked ")); Serial.print(off, 1); Serial.println(F(" cm off centre -> re-entry"));
+    turnToHeading(axisHdg, true);
+    driveStraightCm(-16.0f, false, nullptr, true, nullptr, true, axisHdg);       // back out along the axis
+    float a = constrain(atan2f(off, 10.0f) / D2R, -35.0f, 35.0f);                // diagonal that cancels the offset
+    turnToHeading(axisHdg - a, true);
+    driveStraightCm(10.0f / cosf(a * D2R), true, nullptr, true, nullptr, true, axisHdg - a, T2_PARK_STOP_CM + 3.0f);
+    turnToHeading(axisHdg, true);                                                 // straighten, then dock again
+    off = railLockDrive(axisHdg, axisHdg, 14.0f);
+  }
+  if (!timeUp()) turnToHeading(axisHdg, true);           // square to the rails
+
+  // 5. Square to the back wall: it is perpendicular to the pocket, so the
+  //    shortest front reading in a +/-8 deg sweep is the exact pocket heading
+  if (!timeUp() && raceSecondsLeft() > 5.0f) {
+    float sx[5], sy[5]; int n = 0;
+    for (int k = -2; k <= 2 && !timeUp(); k++) {
+      if (!turnToHeading(axisHdg + 4.0f * k, true)) break;
+      delay(40);
+      float f = readUltrasonicMedian(F_TRIG, F_ECHO, 5, 6000UL);
+      if (f < 40.0f) { sx[n] = getHeadingDeg() - axisHdg; sy[n] = f; n++; }
+    }
+    float v = 0.0f;
+    if (n >= 3 && fitQuadraticMin(sx, sy, n, v)) axisHdg += constrain(v, -8.0f, 8.0f);
+    turnToHeading(axisHdg, true);
+  }
   stopMotors();
-  Serial.println(F(">>> [TARGET 2 PARKED!] MISSION COMPLETE! <<<"));
+  Serial.print(F(">>> [TARGET 2 PARKED!] centre offset ")); Serial.print(off, 1);
+  Serial.println(F(" cm. MISSION COMPLETE! <<<"));
 }
 
 // ============================================================================
