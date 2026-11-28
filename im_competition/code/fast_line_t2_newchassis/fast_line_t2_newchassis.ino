@@ -6,6 +6,12 @@
 //     * search: the 2nd direction now sweeps the full 150 deg past the start
 //       (old code only got back to ~+5 deg -> never found the V's next line)
 //     * T2 wall hit armed after 13 cm (nose is 3 cm longer -> wall comes 3 cm earlier)
+//   C TURN = friends' LineTest logic: encoder speed hold (18 cm/s), wheel ratios
+//     110 0.7/1.25, 100 inner wheel STOPPED / outer 1.5 (arc, no spin while a sensor
+//     sees the line), no near-wall clamp, corridor (both sides < 12 cm) centring only
+//     on straight bits, 000 in the corridor = drive on centred, 000 elsewhere = spin
+//     in place 45 toward the last side / 160 other way / 160 back.
+//   Sharp V -> unchanged: gyro > 97 -> 87 deg -> gyro straight -> wall hit -> 9 s push.
 // + GYRO >97 -> 90 + 3 DEG CW (87 DEG) + PURE GYRO FAST STRAIGHT + 9s PUSH -> STOP
 //   - Standalone Line-Following Code ONLY (ready to test & integrate later)
 //   - Fixes passage stop bug:
@@ -84,6 +90,24 @@ const float LF_CURVE_DEG         = 25.0f;
 const float LF_CURVE_SPEED       = 0.88f;
 const unsigned long LF_LOST_GRACE_MS = 35UL;
 const float LF_SEARCH_DEG        = 150.0f;
+
+// C-TURN LOGIC (friends' LineTest values, adapted to this robot)
+const float LF_SPEED_CMS         = 18.0f;  // line speed target (encoder speed hold)
+const float LF_KV                = 0.8f;   // PWM per cm/s of speed error, every 50 ms
+const int   LF_START_PWM         = 145;    // break-away
+const int   LF_RUN_PWM           = 130;    // once rolling
+const int   LF_BASE_LO           = 105;
+const int   LF_BASE_HI           = 200;
+const float LF_SOFT_IN           = 0.70f;  // 110 / 011: inner wheel
+const float LF_SOFT_OUT          = 1.25f;  //             outer wheel
+const float LF_HARD_OUT          = 1.50f;  // 100 / 001: outer wheel, inner wheel STOPPED
+const float LF_CORRIDOR_CM       = 12.0f;  // both side US under this = narrow corridor
+const float LF_KC_PWM_PER_CM     = 3.0f;   // corridor centring (straight bits / lost only)
+const unsigned long LF_CT_GRACE_MS = 120UL; // 000 after a CENTRE reading: straight this long
+const int   LF_CT_SPIN_PWM       = 130;    // spin in place, wheels opposite
+const float LF_SEARCH_FIRST_DEG  = 45.0f;  // sweep 1: toward the last side
+const float LF_SEARCH_OTHER_DEG  = 160.0f; // sweep 2: the other way
+const float LF_SEARCH_SIDE_DEG   = 160.0f; // sweep 3: back to the last side
 
 // NEW CHASSIS: wooden block in front -> IR row & front US are this much further forward
 const float LF_IR_EXTRA_CM       = 3.0f;   // set 0 for the old chassis
@@ -758,6 +782,11 @@ bool followLine(bool standaloneTest = true) {
   float lostHdg0 = 0.0f;
   bool  lostNearWall = false;
   bool  inExtraCreep = false;
+  bool  lastWasSide  = false;            // last black reading was ONE side sensor only
+  float ctBase = (float)LF_START_PWM, ctV = 0.0f, ctSpdDist = getEncoderDistCm();
+  unsigned long ctSpdMs = millis();
+  bool  ctRolling = false;
+  float recoverStart = -9999.0f;
   float extraDist0 = 0.0f;               // creep start (new-chassis extra 3 cm)
   unsigned long extraDoneMs = 0;         // when the creep finished (brake starts)
 
@@ -912,170 +941,93 @@ bool followLine(bool standaloneTest = true) {
       continue;
     }
 
-    // ---- Wall assist (+ = steer RIGHT, - = steer LEFT) ----
-    float wallTurn = 0.0f;
-#if USE_WALL_ASSIST
-    if (inPassage) {
-      wallTurn = constrain(LF_WALL_CENTER_K * (lfSideR - lfSideL),
-                           -(float)LF_WALL_CENTER_MAX, (float)LF_WALL_CENTER_MAX);
-    }
-    if (lfSideL < LF_WALL_PAD_CM && lfSideL <= lfSideR) {
-      wallTurn += constrain(LF_WALL_PAD_K * (LF_WALL_PAD_CM - lfSideL), 0.0f, (float)LF_WALL_PAD_MAX);
-    } else if (lfSideR < LF_WALL_PAD_CM && lfSideR < lfSideL) {
-      wallTurn -= constrain(LF_WALL_PAD_K * (LF_WALL_PAD_CM - lfSideR), 0.0f, (float)LF_WALL_PAD_MAX);
-    }
-#endif
-
-    // ---- Line error: negative = line is to the LEFT (turn left) ----
-    bool  lost = false;
-    float e    = 0.0f;
-    switch (code) {
-      case 0b010: e =  0.0f; break;
-      case 0b110: e = -1.0f; break;
-      case 0b100: e = -2.0f; break;
-      case 0b011: e =  1.0f; break;
-      case 0b001: e =  2.0f; break;
-#if KEEP_LEFT_AT_FORK
-      case 0b111: e = -0.7f; break;
-      case 0b101: e = -2.0f; break;
-#else
-      case 0b111: e =  0.0f; break;
-      case 0b101: e =  0.0f; break;
-#endif
-      default: lost = true; break;
-    }
-    if (!lost && e != 0.0f) { lastSide = (e < 0.0f) ? -1 : 1; lastSideMs = now; }
+    // =====================================================================
+    // C-TURN LOGIC (friends' LineTest): slow encoder speed hold, fixed wheel
+    // ratios, inner wheel STOPS on a hard turn (arc, never spins while a sensor
+    // sees the line), no near-wall clamp, corridor centring only on straight
+    // bits, lost line -> spin in place with 3 sweeps (45 / 160 / 160).
+    // =====================================================================
+    bool corridor = (lfSideL < LF_CORRIDOR_CM && lfSideR < LF_CORRIDOR_CM);
+    int  wallCorr = corridor ? (int)constrain(LF_KC_PWM_PER_CM * (lfSideL - lfSideR), -25.0f, 25.0f) : 0; // + = steer left
     if (code == 0b111 || code == 0b101) lastJunctionMs = now;
 
+    // speed hold: every 50 ms; lower any time, raise only on straight bits
+    if (now - ctSpdMs >= 50UL) {
+      float dNow = getEncoderDistCm();
+      ctV = fabsf(dNow - ctSpdDist) * 1000.0f / (float)(now - ctSpdMs);
+      ctSpdDist = dNow; ctSpdMs = now;
+      bool straightBit = (code == 0b010 || code == 0b111);
+      float dv = LF_SPEED_CMS - ctV;
+      if (!ctRolling && ctV >= 2.0f) { ctRolling = true; ctBase = min(ctBase, (float)LF_RUN_PWM); }
+      else if (ctRolling && code != 0b000 && (dv < 0.0f || straightBit))
+        ctBase = constrain(ctBase + LF_KV * dv, (float)LF_BASE_LO, (float)LF_BASE_HI);
+    }
+    int b = (int)ctBase;
     int cmdL = 0, cmdR = 0;
     const char *mode = "LINE";
     inExtraCreep = false;
 
-    if (!lost) {
-      if (lostStartMs != 0) {
-        lostStartMs = 0;
-        prevE = e;
-        dTerm = 0.0f;
-        hardStartMs = now;
-        if (searching) {
-          searching = false;
-          float swung = fabsf(getHeadingDeg() - searchHdg0);
-          if (now - searchStartMs > 150UL) {
-            driveLineMotors(0, 0);
-            delay(LF_FOUND_BRAKE_MS);
-          }
-          if (swung > 45.0f) settleUntilOdo = fwdOdo + LF_SETTLE_CM;
-        }
+    if (code == 0b000 && corridor && searchPhase == 0) {
+      // narrow corridor: never spin there, drive on centred between the walls
+      lostStartMs = 0;
+      cmdL = b + max(0, -wallCorr); cmdR = b + max(0, wallCorr);
+      mode = "CORRIDOR";
+    } else if (code == 0b000) {
+      // ---------------- LINE LOST ----------------
+      if (lostStartMs == 0) {
+        lostStartMs = now;
+        lostHdg0    = hdgNow;
+        searchPhase = 0;
+        extraDist0  = -1.0f;
+        extraDoneMs = 0;
+        // right after the W2-clear straight the IRs are already past the corner: no extra creep
+        if (didWallClearFwd && fwdOdo < wallClearEndOdo + 8.0f) extraDoneMs = now;
       }
-
-      if (e != prevE) dTerm = LF_KD * (e - prevE);
-      else            dTerm *= expf(-dtMs / LF_KD_TAU_MS);
-      prevE = e;
-
-      float base = (float)lfBasePwm - LF_SLOW_PER_ERR * fabsf(e);
-      if (fabsf(turn7) > LF_CURVE_DEG) base *= LF_CURVE_SPEED;
-      if (fwdOdo < settleUntilOdo)     base = min(base, (float)LF_SETTLE_PWM);
-      float turn = LF_KP * e + dTerm;
-
-      if (nearWall) {
-        base *= LF_NEAR_WALL_SPEED;
-        turn  = constrain(turn, -(float)LF_NEAR_WALL_TURN_MAX, (float)LF_NEAR_WALL_TURN_MAX);
-        turn += wallTurn;
-        cmdL  = max((int)(base + turn), 0);
-        cmdR  = max((int)(base - turn), 0);
-        hardSide = 0;
-        mode = inPassage ? "PASSAGE" : "NEARWALL";
+      unsigned long lostMs = now - lostStartMs;
+      if (!lastWasSide && lostMs < LF_CT_GRACE_MS) {
+        cmdL = b; cmdR = b; mode = "GRACE";                 // was centred: line crossing under a weak C
+      } else if (searchPhase == 0 && extraDoneMs == 0) {
+        // NEW CHASSIS: IRs are 3 cm further ahead -> creep those 3 cm straight before spinning
+        if (extraDist0 < 0.0f) extraDist0 = getEncoderDistCm();
+        if (getEncoderDistCm() - extraDist0 >= LF_IR_EXTRA_CM || lostMs > 450UL) extraDoneMs = now;
+        cmdL = b; cmdR = b; mode = "EXTRA3"; inExtraCreep = true;
       } else {
-        turn += wallTurn;
-        int side = (fabsf(e) >= 2.0f) ? ((e < 0.0f) ? -1 : 1) : 0;
-        if (side != hardSide) { hardSide = side; hardStartMs = now; }
-        if (side != 0 && (now - hardStartMs > LF_HARD_SPIN_MS)) {
-          cmdL = (side < 0) ? -LF_SPIN_REV :  LF_SPIN_FWD;
-          cmdR = (side < 0) ?  LF_SPIN_FWD : -LF_SPIN_REV;
-          mode = "PIVOT";
+        // spin IN PLACE toward the last side, then back past the lost heading to the other side
+        float turned = (hdgNow - lostHdg0) * (float)(-lastSide);   // + = toward the last side (hdg + = left)
+        if (searchPhase == 0) {
+          searchPhase = 1; searching = true; searchHdg0 = hdgNow; searchStartMs = now;
+          driveLineMotors(0, 0); delay(40);
+        }
+        if (searchPhase == 1 && turned >= LF_SEARCH_FIRST_DEG)  searchPhase = 2;
+        if (searchPhase == 2 && turned <= -LF_SEARCH_OTHER_DEG) searchPhase = 3;
+        if (searchPhase == 3 && turned >= LF_SEARCH_SIDE_DEG)   searchPhase = 4;
+        if (searchPhase == 4) {
+          // nothing anywhere: never stop dead - creep forward 6 cm and search again
+          if (recoverStart < -1000.0f) recoverStart = getEncoderDistCm();
+          if (getEncoderDistCm() - recoverStart >= 6.0f) { searchPhase = 0; lostStartMs = 0; recoverStart = -9999.0f; searching = false; }
+          cmdL = 130; cmdR = 130; mode = "RECOVER";
         } else {
-          cmdL = (int)(base + turn);
-          cmdR = (int)(base - turn);
-          if (fabsf(e) < 2.0f) { cmdL = max(cmdL, 0);   cmdR = max(cmdR, 0);   }
-          else                 { cmdL = max(cmdL, -75); cmdR = max(cmdR, -75); }
+          int sp = (searchPhase == 2) ? -lastSide : lastSide;      // -1 = spin LEFT, +1 = spin RIGHT
+          cmdL = sp * LF_CT_SPIN_PWM; cmdR = -sp * LF_CT_SPIN_PWM;
+          mode = (sp < 0) ? "SPIN-L" : "SPIN-R";
         }
       }
     } else {
-      // ---------------- LINE LOST (000) — NEVER STOPS BETWEEN WALLS! ----------------
-      if (lostStartMs == 0) {
-        lostStartMs  = now;
-        lostHdg0     = hdgNow;
-        searchPhase  = 0;
-        lostNearWall = nearWall;
-        extraDist0   = -1.0f;
-        extraDoneMs  = 0;
-        // right after the W2-clear straight the IRs are already past the corner: no extra creep
-        if (didWallClearFwd && fwdOdo < wallClearEndOdo + 8.0f) extraDoneMs = now;
-        if (KEEP_LEFT_AT_FORK && lastJunctionMs != 0 && (now - lastJunctionMs < 500UL)) {
-          searchDir = -1;
-        } else if (now - lastSideMs < 400UL) {
-          searchDir = lastSide;
-        } else {
-          float rot = hRing[hIdx] - hRing[(hIdx + 1) % RING];
-          if (rot > 1.5f)       searchDir =  1;
-          else if (rot < -1.5f) searchDir = -1;
-          else                  searchDir = lastSide;
-        }
+      // ---------------- ON THE LINE ----------------
+      if (searching) {
+        searching = false;
+        driveLineMotors(0, 0); delay(LF_FOUND_BRAKE_MS);
       }
-
-      bool openArea = !(lostNearWall || nearWall);
-      if (now - lostStartMs < LF_LOST_GRACE_MS) {
-        cmdL = lastSignedL; cmdR = lastSignedR; mode = "GRACE";
-      } else if (!searching && openArea && extraDoneMs == 0) {
-        // NEW CHASSIS: IRs are 3 cm further ahead -> creep those 3 cm straight first
-        if (extraDist0 < 0.0f) extraDist0 = getEncoderDistCm();
-        if (getEncoderDistCm() - extraDist0 >= LF_IR_EXTRA_CM || now - lostStartMs > 450UL) {
-          extraDoneMs = now;
-          cmdL = 0; cmdR = 0; mode = "BRAKE";
-        } else {
-          cmdL = LF_IR_EXTRA_PWM; cmdR = LF_IR_EXTRA_PWM; mode = "EXTRA3"; inExtraCreep = true;
-        }
-      } else if (!searching && openArea && (now - extraDoneMs < LF_SEARCH_BRAKE_MS)) {
-        cmdL = 0; cmdR = 0; mode = "BRAKE";
-      } else if (lostNearWall || nearWall) {
-        // NEVER stop between walls! Keep driving through centered by wallTurn until IR re-locks!
-        float turn = inPassage ? wallTurn : ((float)searchDir * 30.0f + wallTurn);
-        int   base = (int)((float)lfBasePwm * 0.72f); // ~155 PWM steady drive through gap
-        cmdL = max((int)(base + turn), 80);
-        cmdR = max((int)(base - turn), 80);
-        mode = "PASS-FWD";
-      } else {
-        if (!searching) {
-          searching     = true;
-          searchHdg0    = hdgNow;
-          searchStartMs = now;
-          lostHdg0      = searchHdg0;
-        }
-        float rel      = hdgNow - lostHdg0;
-        float progress = (searchDir < 0) ? rel : -rel;
-        bool wallAhead = (searchDir < 0) ? (lfSideL < LF_SPIN_WALL_CM) : (lfSideR < LF_SPIN_WALL_CM);
-        if (fabsf(hdgNow - srchStuckHdg) > 1.0f || srchStuckMs == 0) { srchStuckHdg = hdgNow; srchStuckMs = now; }
-        else if (now - srchStuckMs > 600UL) { wallAhead = true; srchStuckMs = 0; }
-        float sweepMax = (searchPhase == 0 && searchDir > 0) ? LF_RIGHT_FIRST_DEG : LF_SEARCH_DEG;
-        if (progress >= sweepMax || wallAhead) {
-          if (searchPhase == 0) {
-            searchPhase = 1;
-            searchDir   = -searchDir;   // sweep back THROUGH the start to 150 deg on the other side
-          } else {
-            // Do NOT stop dead if blocked by walls — drive forward centered to clear the gap!
-            searching   = false;
-            searchPhase = 0;
-            lostNearWall = true;
-            cmdL = 140; cmdR = 140;
-            mode = "RECOVER";
-          }
-        }
-        if (searching) {
-          cmdL = (searchDir < 0) ? -LF_SPIN_REV :  LF_SPIN_FWD;
-          cmdR = (searchDir < 0) ?  LF_SPIN_FWD : -LF_SPIN_REV;
-          mode = (searchDir < 0) ? "SEARCH-L" : "SEARCH-R";
-        }
-      }
+      lostStartMs = 0; searchPhase = 0; recoverStart = -9999.0f;
+      lastWasSide = (code == 0b110 || code == 0b100 || code == 0b011 || code == 0b001);
+      if      (code == 0b110) { cmdL = (int)(b * LF_SOFT_IN); cmdR = (int)(b * LF_SOFT_OUT); lastSide = -1; mode = "SOFT-L"; }
+      else if (code == 0b100) { cmdL = 0;                     cmdR = (int)(b * LF_HARD_OUT); lastSide = -1; mode = "HARD-L"; }
+      else if (code == 0b011) { cmdL = (int)(b * LF_SOFT_OUT); cmdR = (int)(b * LF_SOFT_IN); lastSide =  1; mode = "SOFT-R"; }
+      else if (code == 0b001) { cmdL = (int)(b * LF_HARD_OUT); cmdR = 0;                     lastSide =  1; mode = "HARD-R"; }
+#if KEEP_LEFT_AT_FORK
+      else if (code == 0b101) { cmdL = 0;                     cmdR = (int)(b * LF_HARD_OUT); lastSide = -1; mode = "FORK-L"; }
+#endif
+      else { cmdL = b + max(0, -wallCorr); cmdR = b + max(0, wallCorr); mode = corridor ? "STRAIGHT-C" : "STRAIGHT"; }
     }
 
     driveLineMotors(cmdL, cmdR);
@@ -1085,6 +1037,9 @@ bool followLine(bool standaloneTest = true) {
       Serial.print(F("IR=")); Serial.print(l); Serial.print(c); Serial.print(r);
       Serial.print(F(" "));   Serial.print(mode);
       Serial.print(F(" | gT="));   Serial.print(gyroTurn, 0);
+      Serial.print(F(" | v="));    Serial.print(ctV, 1);
+      Serial.print(F(" base="));   Serial.print(b);
+      Serial.print(F(" cmd "));    Serial.print(cmdL); Serial.print(F("/")); Serial.print(cmdR);
       Serial.print(F(" | US L=")); Serial.print(lfSideL, 1);
       Serial.print(F(" R="));      Serial.println(lfSideR, 1);
     }
