@@ -12,7 +12,8 @@
 //               - Majority-of-3 debounced 3-IR + decaying derivative kick
 //               - Brake -> Slow Pivot -> Brake -> Settle on Hairpin E
 //               - Junction memory (111/101 -> search LEFT) + Keep-Left Fork D
-//               - >= 85 deg left in 15 cm = Hairpin Done -> next loss = Point F
+//               - Sharp V (gyro: >= 115 deg left in 12 cm, or >= 80 deg left search
+//                 pivot) = V done -> next loss = Point F (checked ahead only)
 //               - Side-US wall safety (no spin near walls, passage centering,
 //                 wall pad, front stop)
 //   Phase 6   : PINPOINT_T2 Pocket Entry & Rail-Centered Park
@@ -266,9 +267,10 @@ const int   LF_SPIN_REV          = 120;
 const unsigned long LF_SEARCH_BRAKE_MS = 90UL;
 const unsigned long LF_FOUND_BRAKE_MS  = 45UL;
 
-// Hairpin (E) & Line End (F) detection
-const float LF_HAIRPIN_DEG       = 85.0f;  // Left turn this big...
-const float LF_HAIRPIN_WINDOW_CM = 15.0f;  // ...within 15 cm forward travel = hairpin done
+// Sharp V turn (after the C turn) & Line End (F) detection - GYRO heading
+const float LF_V_TURN_DEG        = 115.0f; // heading change this big ...
+const int   LF_V_SLOTS           = 8;      // ... within 8 x 1.5 = 12 cm of travel = V done (C turn: ~90)
+const float LF_V_SWING_DEG       = 80.0f;  // OR a search pivot found the line after this much LEFT swing
 const float LF_LINE_END_MIN_CM   = 6.0f;   // Min travel after hairpin before Point F counts
 const unsigned long LF_LINE_END_LOST_MS = 150UL;
 const float LF_SETTLE_CM         = 12.0f;  // Slow settle distance after big pivot
@@ -279,8 +281,8 @@ const unsigned long LF_LOST_GRACE_MS = 40UL;
 const float LF_SEARCH_DEG        = 150.0f; // max pivot each way: the line BEHIND (~180) is never reached
 
 // End of line: nothing behind is ever accepted near the end
-const float LF_END_TURN_DEG      = 195.0f; // total LEFT turn since the line start that means "hairpin done"
-                                           // (A -> F turns ~260 deg left; before the hairpin at most ~130)
+const float LF_END_TURN_DEG      = 195.0f; // backup only: total LEFT turn since A that counts as "past the V"
+                                           // (used if the line is never found again / front wall stop)
 const float LF_END_CHECK_DEG     = 45.0f;  // end check: look this far left and right (line ahead only)
 const float LF_END_CREEP_CM      = 5.0f;   // ... then creep straight this far and look again
 const float LF_END_WALL_CM       = 12.0f;  // line ends with a wall this close ahead = end, no pivoting
@@ -2905,7 +2907,9 @@ bool runPhase5_FollowLineAndMaze(bool standaloneTest = false) {
   for (int i = 0; i < DRING; i++) dRing[i] = initHdg;
   int   dIdx = 0;
   float fwdOdo = 0.0f, lastOdoDist = getEncoderDistCm(), lastRingOdo = 0.0f;
-  bool  hairpinDone = false;
+  bool  hairpinDone = false;          // true once the sharp V has been turned
+  float bigTurnMax  = 0.0f;            // biggest 12 cm left turn before the V (for tuning)
+  bool  bigTurnLogged = false;
   float hairpinOdo  = 0.0f;
   float settleUntilOdo = -1.0f;
 
@@ -2983,15 +2987,8 @@ bool runPhase5_FollowLineAndMaze(bool standaloneTest = false) {
       dRing[dIdx] = hdgNow;
     }
 
-    float turn15 = hdgNow - dRing[(dIdx + 1) % DRING];          // heading change over last ~15 cm (+ = left)
     float turn7  = hdgNow - dRing[(dIdx + DRING - 4) % DRING];  // heading change over last ~7.5 cm
-    if (!hairpinDone && turn15 >= LF_HAIRPIN_DEG) {
-      hairpinDone    = true;
-      hairpinOdo     = fwdOdo;
-      settleUntilOdo = fwdOdo + LF_SETTLE_CM;
-      Serial.print(F("  [HAIRPIN DONE] turned ")); Serial.print(turn15, 0);
-      Serial.println(F(" deg left -> next line loss = END (Point F)"));
-    }
+    float turnV  = hdgNow - dRing[(dIdx + DRING - LF_V_SLOTS) % DRING]; // over the last ~12 cm (+ = left)
 
     // ---- Debounced 3-IR read ----
     bool l, c, r;
@@ -3045,6 +3042,22 @@ bool runPhase5_FollowLineAndMaze(bool standaloneTest = false) {
     if (!lost && e != 0.0f) { lastSide = (e < 0.0f) ? -1 : 1; lastSideMs = now; }
     if (code == 0b111 || code == 0b101) lastJunctionMs = now;
 
+    // ---- SHARP V detection (gyro): big left turn in a short distance, while ON the line ----
+    if (!lost && !hairpinDone) {
+      if (turnV > bigTurnMax) bigTurnMax = turnV;
+      if (turnV >= LF_V_TURN_DEG) {
+        hairpinDone    = true;
+        hairpinOdo     = fwdOdo;
+        settleUntilOdo = fwdOdo + LF_SETTLE_CM;
+        Serial.print(F("  [SHARP V DONE] turned ")); Serial.print(turnV, 0);
+        Serial.println(F(" deg left in 12 cm -> next line loss = END (Point F)"));
+      } else if (turnV >= 60.0f && !bigTurnLogged) {
+        bigTurnLogged = true;
+        Serial.print(F("  [TURN] ")); Serial.print(turnV, 0);
+        Serial.println(F(" deg left in 12 cm (C turn? V needs 115)"));
+      } else if (turnV < 30.0f) bigTurnLogged = false;
+    }
+
     int cmdL = 0, cmdR = 0;
     const char *mode = "LINE";
 
@@ -3058,13 +3071,19 @@ bool runPhase5_FollowLineAndMaze(bool standaloneTest = false) {
         hardStartMs = now;
         if (searching) {
           searching = false;
-          float swung = fabsf(getHeadingDeg() - searchHdg0);
+          float leftSwing = getHeadingDeg() - searchHdg0;      // + = found to the LEFT
+          float swung = fabsf(leftSwing);
           if (now - searchStartMs > 150UL) {
             driveLineMotors(0, 0);
             delay(LF_FOUND_BRAKE_MS);
           }
           if (swung > 45.0f) settleUntilOdo = fwdOdo + LF_SETTLE_CM;
-          Serial.print(F("  [FOUND] after ")); Serial.print(swung, 0); Serial.println(F(" deg pivot"));
+          Serial.print(F("  [FOUND] after ")); Serial.print(leftSwing, 0); Serial.println(F(" deg pivot (+ = left)"));
+          if (!hairpinDone && leftSwing >= LF_V_SWING_DEG) {
+            hairpinDone = true;
+            hairpinOdo  = fwdOdo;
+            Serial.println(F("  [SHARP V DONE] big left pivot found the line -> next line loss = END (Point F)"));
+          }
         }
       }
 
@@ -3106,9 +3125,8 @@ bool runPhase5_FollowLineAndMaze(bool standaloneTest = false) {
         lostStartMs  = now;
         lostHdg0     = hdgNow;
         lostDist0    = getEncoderDistCm();
-        // end of the line only if the robot had ALREADY turned the hairpin while
-        // on the line (search pivots do not count)
-        endZoneNow   = hairpinDone || (lastOnLineHdg - initHdg >= LF_END_TURN_DEG);
+        // end of the line only once the sharp V is done (gyro)
+        endZoneNow   = hairpinDone;
         {   // line direction = average heading over the last ~9 cm ON the line
           float sum = 0.0f;
           for (int k = 0; k < 6; k++) sum += dRing[(dIdx - k + DRING) % DRING];
@@ -3223,7 +3241,7 @@ bool runPhase5_FollowLineAndMaze(bool standaloneTest = false) {
             searchDir   = -searchDir;
           } else {
             why = wallAhead ? "search blocked by wall" : "line not found (end of line?)";
-            if (hairpinDone) reachedPointF = true;
+            if (hairpinDone || (lastOnLineHdg - initHdg >= LF_END_TURN_DEG)) reachedPointF = true;
             break;
           }
         }
@@ -3259,7 +3277,9 @@ bool runPhase5_FollowLineAndMaze(bool standaloneTest = false) {
   }
   Serial.print(F("[Phase 5] stopped: ")); Serial.print(why);
   Serial.print(F(" | time "));            Serial.print((millis() - t0) * 0.001f, 1);
-  Serial.print(F(" s | fwdOdo "));        Serial.print(fwdOdo, 0); Serial.println(F(" cm"));
+  Serial.print(F(" s | fwdOdo "));        Serial.print(fwdOdo, 0);
+  Serial.print(F(" cm | V done "));       Serial.print(hairpinDone ? F("yes") : F("NO"));
+  Serial.print(F(" | biggest turn before V ")); Serial.print(bigTurnMax, 0); Serial.println(F(" deg/12cm"));
   while (Serial.available()) Serial.read();
 
   return (!manualAbort && !timeUp() && (reachedPointF || hairpinDone));

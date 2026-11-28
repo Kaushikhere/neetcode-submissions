@@ -1,25 +1,33 @@
 // ============================================================================
-// 3-IR LINE FOLLOWER - standalone (taken from the full-race firmware, Phase 5)
+// 3-IR LINE FOLLOWER + GYRO + T2  (standalone, from the full-race firmware)
 //   IR: L = GP17, C = GP22, R = GP16 (HIGH = black)
 //   Motors: R ENA GP0 IN1 GP1 IN2 GP2 | L IN3 GP3 IN4 GP4 ENB GP5 (inverted PWM)
 //   Encoders: R GP12/GP13, L GP14/GP15 (quadrature)
-//   Ultrasonics: F 8/9, R 6/7, L 18/19 (wall assist + front stop)
-//   No gyro: heading from the encoders.
-//   Starts 3 s after power-up. Serial (115200): + faster, - slower, v log on/off,
-//   any other key = STOP.
-//   Line end: once the hairpin is done (>= 195 deg total left turn on the line, or
-//   85 deg within 15 cm) a lost line is checked AHEAD only (+/-45 deg, creep 5 cm,
-//   +/-45 deg) - the line behind is never picked up, so no U-turn. Nothing ahead
-//   (or a wall < 12 cm ahead) = end of line: it stops there.
+//   Ultrasonics: F 8/9, R 6/7, L 18/19 (wall assist + front stop + T2 rails)
+//   MPU6050: SDA GP20, SCL GP21 (read on core 1; encoders take over if it fails)
+//
+//   Power on and keep the robot STILL for 2 s (gyro calibration). It starts
+//   3 s later. Serial 115200: + faster, - slower, v log on/off, other key = STOP.
+//
+//   SHARP V TURN (after the C turn) is detected with the GYRO only:
+//     heading change >= 115 deg within 12 cm of travel, or one search pivot that
+//     finds the line after >= 80 deg to the LEFT. The C turn only reaches ~90 deg
+//     in 12 cm, so it can no longer be mistaken for the V (that is why the old
+//     code stopped at the V: encoder heading over-counts turns when wheels slip).
+//   After the V, a lost line is checked AHEAD only (+/-45, creep 5 cm, +/-45):
+//     nothing ahead = line end F -> (GO_TO_T2 1) rail-lock drive into the T2 pocket.
 // ============================================================================
 #include <Arduino.h>
 #include <math.h>
+#include <Wire.h>
 
 #define SWAP_LR_IR        0   // 1 if 'L' and 'R' IR are swapped
 #define KEEP_LEFT_AT_FORK 1   // fork: main line goes LEFT
 #define USE_WALL_ASSIST   1   // side ultrasonics keep the wheels off walls
 #define USE_FRONT_STOP    1   // stop if something is right in front
-#define STOP_AT_LINE_END  1   // after the hairpin, line lost = end of line
+#define STOP_AT_LINE_END  1   // after the sharp V, line lost = end of line
+#define USE_GYRO          1   // MPU6050 heading (0 = encoders only)
+#define GO_TO_T2          1   // after the line end, drive into the T2 pocket (0 = just stop)
 
 const int R_ENA = 0, R_IN1 = 1, R_IN2 = 2;
 const int L_IN3 = 3, L_IN4 = 4, L_ENB = 5;
@@ -32,6 +40,7 @@ const int PIN_IR_L = 17;
 const int PIN_IR_R = 16;
 const int PIN_IR_C = 22;
 const int IR_BLACK_STATE = HIGH;
+const int PIN_I2C_SDA = 20, PIN_I2C_SCL = 21;   // GY-521 / MPU6050
 
 #define INVERT_MOTOR_DIR 0
 const int8_t ENC_R_SIGN = -1;
@@ -57,9 +66,10 @@ const int   LF_SPIN_REV          = 120;
 const unsigned long LF_SEARCH_BRAKE_MS = 90UL;
 const unsigned long LF_FOUND_BRAKE_MS  = 45UL;
 
-// Hairpin (E) & Line End (F) detection
-const float LF_HAIRPIN_DEG       = 85.0f;  // Left turn this big...
-const float LF_HAIRPIN_WINDOW_CM = 15.0f;  // ...within 15 cm forward travel = hairpin done
+// Sharp V turn (after the C turn) & Line End (F) detection - GYRO heading
+const float LF_V_TURN_DEG        = 115.0f; // heading change this big ...
+const int   LF_V_SLOTS           = 8;      // ... within 8 x 1.5 = 12 cm of travel = V done (C turn: ~90)
+const float LF_V_SWING_DEG       = 80.0f;  // OR a search pivot found the line after this much LEFT swing
 const float LF_LINE_END_MIN_CM   = 6.0f;   // Min travel after hairpin before Point F counts
 const unsigned long LF_LINE_END_LOST_MS = 150UL;
 const float LF_SETTLE_CM         = 12.0f;  // Slow settle distance after big pivot
@@ -70,8 +80,8 @@ const unsigned long LF_LOST_GRACE_MS = 40UL;
 const float LF_SEARCH_DEG        = 150.0f; // max pivot each way: the line BEHIND (~180) is never reached
 
 // End of line: nothing behind is ever accepted near the end
-const float LF_END_TURN_DEG      = 195.0f; // total LEFT turn since the line start that means "hairpin done"
-                                           // (A -> F turns ~260 deg left; before the hairpin at most ~130)
+const float LF_END_TURN_DEG      = 195.0f; // backup only: total LEFT turn since A that counts as "past the V"
+                                           // (used if the line is never found again / front wall stop)
 const float LF_END_CHECK_DEG     = 45.0f;  // end check: look this far left and right (line ahead only)
 const float LF_END_CREEP_CM      = 5.0f;   // ... then creep straight this far and look again
 const float LF_END_WALL_CM       = 12.0f;  // line ends with a wall this close ahead = end, no pivoting
@@ -93,9 +103,44 @@ const float LF_SPIN_WALL_CM      = 7.0f;
 const unsigned long LF_MAX_STANDALONE_MS = 120000UL;
 const unsigned long LF_LOG_MS            = 150UL;
 
+// MPU6050 (same calibration as the full firmware)
+const float GYRO_SIGN         = 1.0f;    // CCW (left) = positive
+const float GYRO_SCALE        = 0.9907f; // 360.0 / 363.39
+const float GYRO_SENS_500DPS  = 65.5f;
+const float ACCEL_SENS_4G     = 8192.0f;
+const float GYRO_DEADBAND_DPS = 0.08f;
+const int32_t IMPACT_JERK_MG  = 1400;
+
+// Gyro turns (T2 step)
+const int   TURN_FAST_PWM    = 168;
+const int   TURN_CREEP_PWM   = 112;
+const float TURN_VEL_LEAD_S  = 0.022f;
+const float TURN_TRIM_TOL    = 0.40f;
+const float TURN_SYNC_KP     = 0.42f;
+const unsigned long STALL_MS = 100;
+const int   STALL_STEP_PWM   = 12;
+const int   STALL_MAX_PWM    = 65;
+
+// T2 rail-lock docking (geometry relative to the line end F, from the field map:
+// last line piece heading -22 deg, pocket axis -62.7 deg, T2 9.0 cm ahead / 20.6 cm right of F)
+const float SIDE_OFFSET_L        = 10.80f; // left  US to robot centre
+const float SIDE_OFFSET_R        = 11.30f; // right US to robot centre
+const float T2_PARK_STOP_CM      = 5.5f;   // front US reading where it parks
+const float LINE_END_TO_AXIS_DEG = -40.7f;
+const float T2_U_CM              =   9.0f;
+const float T2_V_CM              = -20.6f;
+const float AIM_BEFORE_T2_CM     =   8.0f;
+const float IR_FWD_CM            =   7.5f;
+const float RAIL_SEEN_CM         =  30.0f;
+const float RAIL_LAT_GAIN        =   1.8f;
+const float RAIL_LAT_MAX_DEG     =  14.0f;
+const float RAIL_CENTER_TOL_CM   =   1.5f;
+const float RAIL_HALF_GAP_CM     =  19.6f;
+
 
 int lastSignedL = 0, lastSignedR = 0;
 bool timeUp() { return false; }
+float raceSecondsLeft() { return 999.0f; }
 float gLineHdgAtEnd = 0.0f, gEndOvershootCm = 0.0f;   // kept for the full firmware's T2 step
 bool  gEndByLoss = false;
 
@@ -157,7 +202,290 @@ float getEncoderDistCm() {
   return 0.5f * ((float)l / TICKS_PER_CM_L + (float)r / TICKS_PER_CM_R);
 }
 
-float getHeadingDeg()    { return getEncoderHeadingDeg(); }   // no gyro: encoder heading
+
+// ============================================================================
+// 5. CORE 1 MPU6050 6-AXIS BURST ENGINE (333 Hz GYRO + ACCEL SHOCK DETECTOR)
+// ============================================================================
+volatile int32_t  gyroHeadingMdeg = 0;
+volatile int32_t  gyroRateMdps    = 0;
+volatile int32_t  imuHorizMg      = 0;
+volatile int32_t  imuJerkPeakMg   = 0;
+volatile uint32_t gyroHeartbeat   = 0;
+volatile bool     gyroReady       = false;
+volatile bool     gyroHwOk        = false;
+volatile bool     gyroZeroReq     = false;
+volatile bool     gyroQuickCalReq = false;
+volatile bool     core1PauseReq   = false;
+volatile bool     core1Paused     = false;
+
+#if USE_GYRO
+static uint8_t c1MpuAddr      = 0x68;
+static float   c1GyroBias     = 0.0f;
+static float   c1AxBias       = 0.0f;
+static float   c1AyBias       = 0.0f;
+static float   c1Heading      = 0.0f;
+static float   c1PrevDps      = 0.0f;
+static float   c1PrevAxMg     = 0.0f;
+static float   c1PrevAyMg     = 0.0f;
+static float   c1JerkPeak     = 0.0f;
+static unsigned long c1PrevUs = 0;
+static int     c1I2cErrCount  = 0;
+
+bool c1WriteReg(uint8_t reg, uint8_t val) {
+  Wire.beginTransmission(c1MpuAddr);
+  Wire.write(reg);
+  Wire.write(val);
+  return (Wire.endTransmission() == 0);
+}
+
+bool c1ReadRegs(uint8_t reg, uint8_t cnt, uint8_t *buf) {
+  Wire.beginTransmission(c1MpuAddr);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom(c1MpuAddr, cnt) != cnt) return false;
+  for (uint8_t i = 0; i < cnt; i++) buf[i] = Wire.read();
+  return true;
+}
+
+bool c1ReadBurst6Axis(int16_t &rawAx, int16_t &rawAy, int16_t &rawGz) {
+  uint8_t b[14];
+  if (!c1ReadRegs(0x3B, 14, b)) return false;
+  rawAx = (int16_t)((b[0]  << 8) | b[1]);
+  rawAy = (int16_t)((b[2]  << 8) | b[3]);
+  rawGz = (int16_t)((b[12] << 8) | b[13]);
+  return true;
+}
+
+bool c1InitMPU() {
+  Wire.beginTransmission(0x68);
+  if (Wire.endTransmission() == 0) c1MpuAddr = 0x68;
+  else {
+    Wire.beginTransmission(0x69);
+    if (Wire.endTransmission() == 0) c1MpuAddr = 0x69;
+    else return false;
+  }
+  if (!c1WriteReg(0x6B, 0x01)) return false; // Wake + PLL X gyro clock
+  delay(25);
+  if (!c1WriteReg(0x1A, 0x03)) return false; // DLPF = 42 Hz
+  if (!c1WriteReg(0x19, 0x01)) return false; // 500 Hz sample rate
+  if (!c1WriteReg(0x1B, 0x08)) return false; // Gyro +/- 500 dps
+  if (!c1WriteReg(0x1C, 0x08)) return false; // Accel +/- 4g (8192 LSB/g)
+  delay(20);
+  return true;
+}
+
+void c1RecoverI2C() {
+  Wire.end();
+  pinMode(PIN_I2C_SDA, INPUT_PULLUP);
+  pinMode(PIN_I2C_SCL, OUTPUT);
+  for (int i = 0; i < 9; i++) {
+    digitalWrite(PIN_I2C_SCL, LOW);  delayMicroseconds(10);
+    digitalWrite(PIN_I2C_SCL, HIGH); delayMicroseconds(10);
+  }
+  Wire.setSDA(PIN_I2C_SDA);
+  Wire.setSCL(PIN_I2C_SCL);
+  Wire.begin();
+  Wire.setClock(100000);
+  c1InitMPU();
+  c1PrevUs = micros();
+}
+
+bool c1CalibrateBias(int samples, int maxTries) {
+  for (int attempt = 0; attempt < maxTries; attempt++) {
+    double sumG = 0.0, sumAx = 0.0, sumAy = 0.0;
+    int16_t minR = 32767, maxR = -32768;
+    int valid = 0;
+    for (int i = 0; i < samples; i++) {
+      int16_t ax, ay, gz;
+      if (c1ReadBurst6Axis(ax, ay, gz)) {
+        sumG  += (double)gz;
+        sumAx += (double)ax;
+        sumAy += (double)ay;
+        if (gz < minR) minR = gz;
+        if (gz > maxR) maxR = gz;
+        valid++;
+        gyroHeartbeat++;
+      }
+      delay(2);
+    }
+    if (valid >= (samples * 3) / 4 && (maxR - minR) < 330) {
+      c1GyroBias      = (float)(sumG  / (double)valid);
+      c1AxBias        = (float)(sumAx / (double)valid);
+      c1AyBias        = (float)(sumAy / (double)valid);
+      c1Heading       = 0.0f;
+      c1PrevDps       = 0.0f;
+      c1PrevAxMg      = 0.0f;
+      c1PrevAyMg      = 0.0f;
+      c1JerkPeak      = 0.0f;
+      gyroHeadingMdeg = 0;
+      gyroRateMdps    = 0;
+      imuHorizMg      = 0;
+      imuJerkPeakMg   = 0;
+      c1PrevUs        = micros();
+      return true;
+    }
+    delay(60);
+  }
+  return false;
+}
+
+void setup1() {
+  delay(200);
+  Wire.setSDA(PIN_I2C_SDA);
+  Wire.setSCL(PIN_I2C_SCL);
+  Wire.begin();
+  Wire.setClock(100000);
+
+  if (c1InitMPU()) {
+    c1CalibrateBias(450, 6);
+    gyroHwOk = true;
+  } else {
+    gyroHwOk = false;
+  }
+  gyroReady = true;
+}
+
+void loop1() {
+  if (core1PauseReq) {
+    core1Paused = true;
+    while (core1PauseReq) { delay(5); }
+    core1Paused = false;
+    c1PrevUs = micros();
+    return;
+  }
+  if (!gyroHwOk) { delay(50); return; }
+
+  if (gyroQuickCalReq) {
+    c1CalibrateBias(220, 3);
+    gyroQuickCalReq = false;
+    return;
+  }
+  if (gyroZeroReq) {
+    c1Heading       = 0.0f;
+    c1PrevDps       = 0.0f;
+    c1JerkPeak      = 0.0f;
+    gyroHeadingMdeg = 0;
+    gyroRateMdps    = 0;
+    imuJerkPeakMg   = 0;
+    gyroZeroReq     = false;
+  }
+
+  unsigned long nowUs = micros();
+  float dt = (float)(nowUs - c1PrevUs) * 1e-6f;
+  if (dt < 0.003f) return; // ~333 Hz 14-byte burst
+  if (dt > 0.05f)  dt = 0.003f;
+  c1PrevUs = nowUs;
+
+  int16_t rawAx, rawAy, rawGz;
+  if (!c1ReadBurst6Axis(rawAx, rawAy, rawGz)) {
+    if (++c1I2cErrCount >= 5) {
+      c1I2cErrCount = 0;
+      c1RecoverI2C();
+    }
+    return;
+  }
+  c1I2cErrCount = 0;
+  gyroHeartbeat++;
+
+  float dps = (((float)rawGz - c1GyroBias) / GYRO_SENS_500DPS) * GYRO_SIGN * GYRO_SCALE;
+  if (fabsf(dps) < GYRO_DEADBAND_DPS) dps = 0.0f;
+
+  c1Heading += 0.5f * (dps + c1PrevDps) * dt;
+  c1PrevDps = dps;
+
+  float axMg = (((float)rawAx - c1AxBias) / ACCEL_SENS_4G) * 1000.0f;
+  float ayMg = (((float)rawAy - c1AyBias) / ACCEL_SENS_4G) * 1000.0f;
+  float horizMg = hypotf(axMg, ayMg);
+  float jerkMg  = hypotf(axMg - c1PrevAxMg, ayMg - c1PrevAyMg);
+  c1PrevAxMg = axMg;
+  c1PrevAyMg = ayMg;
+
+  c1JerkPeak = max(jerkMg, c1JerkPeak * 0.88f);
+
+  gyroHeadingMdeg = (int32_t)lroundf(c1Heading * 1000.0f);
+  gyroRateMdps    = (int32_t)lroundf(dps * 1000.0f);
+  imuHorizMg      = (int32_t)lroundf(horizMg);
+  imuJerkPeakMg   = (int32_t)lroundf(c1JerkPeak);
+}
+#endif
+
+bool          gyroFailover         = false;
+uint32_t      lastSeenHeartbeat    = 0;
+unsigned long lastHeartbeatMs      = 0;
+float         lastGoodGyroHdg      = 0.0f;
+float         encFallbackOffsetDeg = 0.0f;
+
+void triggerGyroFailover(const __FlashStringHelper *reason) {
+  if (gyroFailover) return;
+  gyroFailover = true;
+  encFallbackOffsetDeg = lastGoodGyroHdg - getEncoderHeadingDeg();
+  Serial.print(F("  [FAILOVER] Gyro -> Encoders ("));
+  Serial.print(reason); Serial.println(F(")"));
+}
+
+bool isGyroHealthy() {
+#if USE_GYRO
+  if (!gyroHwOk) return false;
+  uint32_t hb = gyroHeartbeat;
+  unsigned long now = millis();
+  if (hb != lastSeenHeartbeat) {
+    lastSeenHeartbeat = hb;
+    lastHeartbeatMs   = now;
+    if (!gyroFailover) {
+      lastGoodGyroHdg = (float)gyroHeadingMdeg * 0.001f;
+      return true;
+    }
+    return false;
+  }
+  if (!gyroFailover && (now - lastHeartbeatMs > 180UL)) {
+    triggerGyroFailover(F("I2C heartbeat stalled"));
+    return false;
+  }
+  return !gyroFailover;
+#else
+  return false;
+#endif
+}
+
+float getHeadingDeg() {
+  if (isGyroHealthy()) {
+    lastGoodGyroHdg = (float)gyroHeadingMdeg * 0.001f;
+    return lastGoodGyroHdg;
+  }
+  return getEncoderHeadingDeg() + encFallbackOffsetDeg;
+}
+
+float getGyroRateDps() {
+  if (isGyroHealthy()) return (float)gyroRateMdps * 0.001f;
+  return 0.0f;
+}
+
+int32_t getImuJerkPeakMg() {
+  if (isGyroHealthy()) return imuJerkPeakMg;
+  return 0;
+}
+
+void resetHeadingAndEncoders(bool quickRecalGyro = false) {
+  resetEncoders();
+  encFallbackOffsetDeg = 0.0f;
+  lastGoodGyroHdg      = 0.0f;
+#if USE_GYRO
+  if (gyroHwOk) {
+    gyroFailover = false;
+    if (quickRecalGyro) {
+      gyroQuickCalReq = true;
+      unsigned long t0 = millis();
+      while (gyroQuickCalReq && (millis() - t0 < 1800UL)) delay(5);
+    } else {
+      gyroZeroReq = true;
+      unsigned long t0 = millis();
+      while (gyroZeroReq && (millis() - t0 < 80UL)) delay(1);
+    }
+    lastSeenHeartbeat = gyroHeartbeat;
+    lastHeartbeatMs   = millis();
+  }
+#endif
+}
 
 void setLeftDir(int dir) {
   if (INVERT_MOTOR_DIR) dir = -dir;
@@ -376,7 +704,9 @@ bool followLine(bool standaloneTest = true) {
   for (int i = 0; i < DRING; i++) dRing[i] = initHdg;
   int   dIdx = 0;
   float fwdOdo = 0.0f, lastOdoDist = getEncoderDistCm(), lastRingOdo = 0.0f;
-  bool  hairpinDone = false;
+  bool  hairpinDone = false;          // true once the sharp V has been turned
+  float bigTurnMax  = 0.0f;            // biggest 12 cm left turn before the V (for tuning)
+  bool  bigTurnLogged = false;
   float hairpinOdo  = 0.0f;
   float settleUntilOdo = -1.0f;
 
@@ -454,15 +784,8 @@ bool followLine(bool standaloneTest = true) {
       dRing[dIdx] = hdgNow;
     }
 
-    float turn15 = hdgNow - dRing[(dIdx + 1) % DRING];          // heading change over last ~15 cm (+ = left)
     float turn7  = hdgNow - dRing[(dIdx + DRING - 4) % DRING];  // heading change over last ~7.5 cm
-    if (!hairpinDone && turn15 >= LF_HAIRPIN_DEG) {
-      hairpinDone    = true;
-      hairpinOdo     = fwdOdo;
-      settleUntilOdo = fwdOdo + LF_SETTLE_CM;
-      Serial.print(F("  [HAIRPIN DONE] turned ")); Serial.print(turn15, 0);
-      Serial.println(F(" deg left -> next line loss = END (Point F)"));
-    }
+    float turnV  = hdgNow - dRing[(dIdx + DRING - LF_V_SLOTS) % DRING]; // over the last ~12 cm (+ = left)
 
     // ---- Debounced 3-IR read ----
     bool l, c, r;
@@ -516,6 +839,22 @@ bool followLine(bool standaloneTest = true) {
     if (!lost && e != 0.0f) { lastSide = (e < 0.0f) ? -1 : 1; lastSideMs = now; }
     if (code == 0b111 || code == 0b101) lastJunctionMs = now;
 
+    // ---- SHARP V detection (gyro): big left turn in a short distance, while ON the line ----
+    if (!lost && !hairpinDone) {
+      if (turnV > bigTurnMax) bigTurnMax = turnV;
+      if (turnV >= LF_V_TURN_DEG) {
+        hairpinDone    = true;
+        hairpinOdo     = fwdOdo;
+        settleUntilOdo = fwdOdo + LF_SETTLE_CM;
+        Serial.print(F("  [SHARP V DONE] turned ")); Serial.print(turnV, 0);
+        Serial.println(F(" deg left in 12 cm -> next line loss = END (Point F)"));
+      } else if (turnV >= 60.0f && !bigTurnLogged) {
+        bigTurnLogged = true;
+        Serial.print(F("  [TURN] ")); Serial.print(turnV, 0);
+        Serial.println(F(" deg left in 12 cm (C turn? V needs 115)"));
+      } else if (turnV < 30.0f) bigTurnLogged = false;
+    }
+
     int cmdL = 0, cmdR = 0;
     const char *mode = "LINE";
 
@@ -529,13 +868,19 @@ bool followLine(bool standaloneTest = true) {
         hardStartMs = now;
         if (searching) {
           searching = false;
-          float swung = fabsf(getHeadingDeg() - searchHdg0);
+          float leftSwing = getHeadingDeg() - searchHdg0;      // + = found to the LEFT
+          float swung = fabsf(leftSwing);
           if (now - searchStartMs > 150UL) {
             driveLineMotors(0, 0);
             delay(LF_FOUND_BRAKE_MS);
           }
           if (swung > 45.0f) settleUntilOdo = fwdOdo + LF_SETTLE_CM;
-          Serial.print(F("  [FOUND] after ")); Serial.print(swung, 0); Serial.println(F(" deg pivot"));
+          Serial.print(F("  [FOUND] after ")); Serial.print(leftSwing, 0); Serial.println(F(" deg pivot (+ = left)"));
+          if (!hairpinDone && leftSwing >= LF_V_SWING_DEG) {
+            hairpinDone = true;
+            hairpinOdo  = fwdOdo;
+            Serial.println(F("  [SHARP V DONE] big left pivot found the line -> next line loss = END (Point F)"));
+          }
         }
       }
 
@@ -577,9 +922,8 @@ bool followLine(bool standaloneTest = true) {
         lostStartMs  = now;
         lostHdg0     = hdgNow;
         lostDist0    = getEncoderDistCm();
-        // end of the line only if the robot had ALREADY turned the hairpin while
-        // on the line (search pivots do not count)
-        endZoneNow   = hairpinDone || (lastOnLineHdg - initHdg >= LF_END_TURN_DEG);
+        // end of the line only once the sharp V is done (gyro)
+        endZoneNow   = hairpinDone;
         {   // line direction = average heading over the last ~9 cm ON the line
           float sum = 0.0f;
           for (int k = 0; k < 6; k++) sum += dRing[(dIdx - k + DRING) % DRING];
@@ -694,7 +1038,7 @@ bool followLine(bool standaloneTest = true) {
             searchDir   = -searchDir;
           } else {
             why = wallAhead ? "search blocked by wall" : "line not found (end of line?)";
-            if (hairpinDone) reachedPointF = true;
+            if (hairpinDone || (lastOnLineHdg - initHdg >= LF_END_TURN_DEG)) reachedPointF = true;
             break;
           }
         }
@@ -730,10 +1074,345 @@ bool followLine(bool standaloneTest = true) {
   }
   Serial.print(F("[Phase 5] stopped: ")); Serial.print(why);
   Serial.print(F(" | time "));            Serial.print((millis() - t0) * 0.001f, 1);
-  Serial.print(F(" s | fwdOdo "));        Serial.print(fwdOdo, 0); Serial.println(F(" cm"));
+  Serial.print(F(" s | fwdOdo "));        Serial.print(fwdOdo, 0);
+  Serial.print(F(" cm | V done "));       Serial.print(hairpinDone ? F("yes") : F("NO"));
+  Serial.print(F(" | biggest turn before V ")); Serial.print(bigTurnMax, 0); Serial.println(F(" deg/12cm"));
   while (Serial.available()) Serial.read();
 
   return (!manualAbort && !timeUp() && (reachedPointF || hairpinDone));
+}
+
+
+// ============================================================================
+// T2: rail-lock docking (from the full firmware, Phase 6)
+// ============================================================================
+float readUltrasonicSingle(int trigPin, int echoPin, unsigned long toUs = 15000UL, bool clampClose = true) {
+  digitalWrite(trigPin, LOW);  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH); delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  unsigned long us = pulseIn(echoPin, HIGH, toUs);
+  if (us == 0) return (toUs * 0.01715f);
+  float cm = (float)us * 0.01715f;
+  if (clampClose) return (cm < 2.5f) ? 1.5f : cm;
+  return (cm < 2.0f) ? 250.0f : cm;
+}
+
+float readUltrasonicMedian(int trigPin, int echoPin, int samples = 3, unsigned long toUs = 15000UL) {
+  float vals[11];
+  if (samples > 11) samples = 11;
+  for (int i = 0; i < samples; i++) {
+    vals[i] = readUltrasonicSingle(trigPin, echoPin, toUs, true);
+    delay(12);
+  }
+  for (int i = 0; i < samples - 1; i++) {
+    for (int j = i + 1; j < samples; j++) {
+      if (vals[j] < vals[i]) { float t = vals[i]; vals[i] = vals[j]; vals[j] = t; }
+    }
+  }
+  return vals[samples / 2];
+}
+
+bool fitQuadraticMin(const float *x, const float *y, int n, float &xVertOut) {
+  if (n < 3) return false;
+  double s0 = (double)n, s1 = 0, s2 = 0, s3 = 0, s4 = 0;
+  double t0 = 0, t1 = 0, t2 = 0;
+  for (int i = 0; i < n; i++) {
+    double xi = (double)x[i], xi2 = xi * xi, yi = (double)y[i];
+    s1 += xi; s2 += xi2; s3 += xi2 * xi; s4 += xi2 * xi2;
+    t0 += yi; t1 += xi * yi; t2 += xi2 * yi;
+  }
+  double det  = s4 * (s2 * s0 - s1 * s1) - s3 * (s3 * s0 - s1 * s2) + s2 * (s3 * s1 - s2 * s2);
+  if (fabs(det) < 1e-7) return false;
+  double detA = t2 * (s2 * s0 - s1 * s1) - s3 * (t1 * s0 - s1 * t0) + s2 * (t1 * s1 - s2 * t0);
+  double detB = s4 * (t1 * s0 - s1 * t0) - t2 * (s3 * s0 - s1 * s2) + s2 * (s3 * t0 - t1 * s2);
+  double a = detA / det, b = detB / det;
+  if (a <= 1e-4) return false;
+  xVertOut = (float)(-b / (2.0 * a));
+  return true;
+}
+
+bool turnToHeadingRaw(float targetHdgDeg) {
+  float hdg0    = getHeadingDeg();
+  float encHdg0 = getEncoderHeadingDeg();
+  float err0    = targetHdgDeg - hdg0;
+  if (fabsf(err0) < 0.45f) return true;
+
+  int dir = (err0 > 0.0f) ? 1 : -1;
+  long l0, r0;
+  readEncoders(l0, r0);
+
+  setLeftDir(-dir);
+  setRightDir(dir);
+
+  long stallL = l0, stallR = r0;
+  int boost = 0;
+  unsigned long lastMoveMs = millis();
+  unsigned long tStart     = lastMoveMs;
+
+  float prevVelHdg   = hdg0;
+  float smoothVelDps = 0.0f;
+  unsigned long prevVelMs = lastMoveMs;
+
+  while (!timeUp()) {
+    unsigned long now = millis();
+    if (now - tStart > 4500UL) { stopMotors(); Serial.println(F("  [Turn] Timeout!")); return false; }
+
+    long l, r;
+    readEncoders(l, r);
+
+    if ((now - tStart > 1200UL) && (labs(l - l0) + labs(r - r0) < 10)) {
+      stopMotors();
+      Serial.println(F("  [ERROR] Wheels/encoders not moving!"));
+      return false;
+    }
+
+    if (isGyroHealthy()) {
+      float encMoved  = fabsf(getEncoderHeadingDeg() - encHdg0);
+      float gyroMoved = fabsf(getHeadingDeg() - hdg0);
+      if (encMoved > 28.0f && gyroMoved < 4.0f) {
+        triggerGyroFailover(F("gyro stuck vs encoders"));
+      }
+    }
+
+    float curHdg = getHeadingDeg();
+    float remDeg = (targetHdgDeg - curHdg) * (float)dir;
+    if (remDeg > fabsf(err0) + 18.0f) {
+      stopMotors();
+      Serial.println(F("  [ERROR] Wrong spin direction!"));
+      return false;
+    }
+
+    float rateDps = 0.0f;
+    bool  gyroOk  = isGyroHealthy();
+    if (gyroOk) {
+      rateDps = fabsf(getGyroRateDps());
+    } else {
+      if (now - prevVelMs >= 16UL) {
+        float dtS = (float)(now - prevVelMs) * 0.001f;
+        smoothVelDps = 0.5f * smoothVelDps + 0.5f * (fabsf(curHdg - prevVelHdg) / dtS);
+        prevVelHdg = curHdg;
+        prevVelMs  = now;
+      }
+      rateDps = smoothVelDps;
+    }
+
+    float dynLead = constrain(0.55f + TURN_VEL_LEAD_S * rateDps, 0.75f, 8.5f);
+    float lead    = min(dynLead, fabsf(err0) * 0.45f);
+    if (remDeg <= lead) break;
+
+    if (labs(l - stallL) + labs(r - stallR) >= 3) {
+      stallL = l; stallR = r; lastMoveMs = now; boost = 0;
+    } else if (now - lastMoveMs > STALL_MS) {
+      boost = min(boost + STALL_STEP_PWM, STALL_MAX_PWM);
+      lastMoveMs = now;
+    }
+
+    float base = 0.0f;
+    if (gyroOk) {
+      float targetDps = constrain(remDeg * 3.8f, 26.0f, 155.0f);
+      float ffPwm     = (float)TURN_CREEP_PWM + ((targetDps - 26.0f) / 129.0f) * (float)(TURN_FAST_PWM - TURN_CREEP_PWM);
+      float velTrim   = constrain((targetDps - rateDps) * 0.42f, -26.0f, 26.0f);
+      base = ffPwm + velTrim + (float)boost;
+    } else {
+      float frac = constrain((remDeg - 8.0f) / 34.0f, 0.0f, 1.0f);
+      base = (float)TURN_CREEP_PWM + frac * (float)(TURN_FAST_PWM - TURN_CREEP_PWM) + (float)boost;
+    }
+
+    long dL = labs(l - l0), dR = labs(r - r0);
+    float syncCorr = constrain(TURN_SYNC_KP * (float)(dR - dL), -35.0f, 35.0f);
+
+    int lPWM = (int)roundf(base + syncCorr);
+    int rPWM = (int)roundf((base - syncCorr) * RIGHT_FF);
+    setMotorPWM(constrain(lPWM, 92, 235), constrain(rPWM, 82, 230));
+    delay(4);
+  }
+
+  stopMotors(35);
+  delay(45);
+  return true;
+}
+
+bool turnToHeading(float targetHdgDeg, bool doTrim = true, float tolDeg = TURN_TRIM_TOL) {
+  float initRem = targetHdgDeg - getHeadingDeg();
+  if (fabsf(initRem) > 3.5f) {
+    if (!turnToHeadingRaw(targetHdgDeg)) return false;
+  }
+  if (!doTrim) return true;
+
+  int trimPwm = 132;
+  for (int pulse = 0; pulse < 2 && !timeUp(); pulse++) {
+    float before = getHeadingDeg();
+    float rem    = targetHdgDeg - before;
+    if (fabsf(rem) <= tolDeg || fabsf(rem) > 18.0f) break;
+
+    int dir     = (rem > 0.0f) ? 1 : -1;
+    int pulseMs = constrain((int)lroundf(9.0f + fabsf(rem) * 4.2f), 11, 36);
+
+    setLeftDir(-dir);
+    setRightDir(dir);
+    setMotorPWM(trimPwm, (int)roundf((float)trimPwm * RIGHT_FF));
+    delay(pulseMs);
+    stopMotors(30);
+    delay(45);
+
+    float after    = getHeadingDeg();
+    float newRem   = targetHdgDeg - after;
+    float movedDeg = (after - before) * (float)dir;
+    if (newRem * rem <= 0.0f) break;
+    if (movedDeg < 0.18f) trimPwm = min(trimPwm + 24, 200);
+  }
+  return true;
+}
+
+// Straight drive holding a gyro heading (cm < 0 = reverse); optional front stop
+void driveStraightHold(float cm, float holdHdg, float frontStopCm = 0.0f) {
+  int   dir    = (cm >= 0.0f) ? 1 : -1;
+  float target = fabsf(cm);
+  float d0     = getEncoderDistCm();
+  setLeftDir(dir); setRightDir(dir);
+  int hits = 0;
+  unsigned long t0 = millis(), lastUs = 0;
+  while (!timeUp() && millis() - t0 < 6000UL) {
+    float done = fabsf(getEncoderDistCm() - d0);
+    if (done >= target - 0.3f) break;
+    if (dir > 0 && frontStopCm > 0.0f && millis() - lastUs >= 25UL) {
+      lastUs = millis();
+      float f = readUltrasonicSingle(F_TRIG, F_ECHO, 6000UL, true);
+      if (f <= frontStopCm) { if (++hits >= 2) break; } else hits = 0;
+    }
+    float err  = getHeadingDeg() - holdHdg;                 // + = pointing left
+    float corr = constrain(5.0f * err + 0.3f * getGyroRateDps(), -40.0f, 40.0f) * (float)dir;
+    int   base = (target - done < 4.0f) ? 108 : 130;
+    setMotorPWM(constrain((int)roundf((float)base + corr), 85, 200),
+                constrain((int)roundf(((float)base - corr) * RIGHT_FF), 75, 190));
+    delay(3);
+  }
+  stopMotors(50);
+  delay(40);
+}
+
+float railLockDrive(float aimHdg, float &axisHdg, float maxCm) {
+  const float D2R = (float)M_PI / 180.0f;
+  long l0, r0; readEncoders(l0, r0);
+  setLeftDir(1); setRightDir(1);
+  bool  railsSeen = false;
+  float posLeft = 99.0f, winS = 0.0f, winPos = 0.0f; bool winSet = false;
+  int   stopHits = 0, slot = 0;
+  float dL = 99.0f, dR = 99.0f, dF = 99.0f;
+  unsigned long t0 = millis(), lastUs = 0;
+  while (!timeUp() && millis() - t0 < 9000UL) {
+    unsigned long now = millis();
+    long l, r; readEncoders(l, r);
+    float s = 0.5f * ((float)(l - l0) / TICKS_PER_CM_L + (float)(r - r0) / TICKS_PER_CM_R);
+    if (s >= maxCm) break;
+    if (now - t0 > 300UL && getImuJerkPeakMg() > IMPACT_JERK_MG) { Serial.println(F("  [Rail-Lock] bump -> stop")); break; }
+
+    if (now - lastUs >= 22UL) {               // L, F, R, F ... one sensor per slot
+      lastUs = now;
+      if      (slot == 0) dL = readUltrasonicSingle(L_TRIG, L_ECHO, 3500UL, true);
+      else if (slot == 2) dR = readUltrasonicSingle(R_TRIG, R_ECHO, 3500UL, true);
+      else {
+        dF = readUltrasonicSingle(F_TRIG, F_ECHO, 6000UL, true);
+        if (dF <= T2_PARK_STOP_CM) { if (++stopHits >= 2) break; } else stopHits = 0;
+      }
+      slot = (slot + 1) % 4;
+      bool seeL = dL < RAIL_SEEN_CM, seeR = dR < RAIL_SEEN_CM;
+      bool both = seeL && seeR;
+      if (seeL || seeR) {                     // one rail is enough: the pocket width is known
+        float fromL = RAIL_HALF_GAP_CM - (dL + SIDE_OFFSET_L);   // + = left of centre
+        float fromR = (dR + SIDE_OFFSET_R) - RAIL_HALF_GAP_CM;
+        posLeft = both ? 0.5f * (fromL + fromR) : (seeL ? fromL : fromR);
+        if (!railsSeen) { railsSeen = true; Serial.print(F("  [Rail-Lock] rails seen, offset ")); Serial.println(posLeft, 1); }
+        // learn the rails' direction: offset change per cm driven
+        if (!both) { winSet = false; }
+        else if (!winSet) { winSet = true; winS = s; winPos = posLeft; }
+        else if (s - winS >= 4.0f) {
+          float slope = (posLeft - winPos) / (s - winS);          // + = drifting left
+          if (fabsf(slope) < 0.5f) {
+            float railsHdg = getHeadingDeg() - asinf(slope) / D2R;
+            axisHdg = 0.7f * axisHdg + 0.3f * railsHdg;
+          }
+          winS = s; winPos = posLeft;
+        }
+      }
+    }
+
+    float target = railsSeen ? axisHdg - constrain(RAIL_LAT_GAIN * posLeft, -RAIL_LAT_MAX_DEG, RAIL_LAT_MAX_DEG)
+                             : aimHdg;
+    float err  = getHeadingDeg() - target;                   // + = pointing left of target
+    float corr = constrain(6.0f * err + 0.4f * getGyroRateDps(), -45.0f, 45.0f);
+    int base = (dF < T2_PARK_STOP_CM + 9.0f) ? 112 : 130;
+    setMotorPWM(constrain((int)roundf((float)base + corr), 88, 200),
+                constrain((int)roundf(((float)base - corr) * RIGHT_FF), 78, 190));
+    delay(3);
+  }
+  stopMotors(60);
+  Serial.print(F("  [Rail-Lock] stop: L=")); Serial.print(dL, 1); Serial.print(F(" R=")); Serial.print(dR, 1);
+  Serial.print(F(" F=")); Serial.println(dF, 1);
+  return railsSeen ? posLeft : 99.0f;
+}
+
+
+void runPhase6_PinpointT2() {
+  if (timeUp()) return;
+  const float D2R = (float)M_PI / 180.0f;
+  Serial.println(F("[Phase 6] RAIL-LOCK T2: exact line-end pose -> aim on centre line -> rail lock -> front stop"));
+  stopMotors(40);
+  delay(60);
+
+  // 1. Back up the overshoot: IRs back on the line end F
+  if (gEndByLoss && gEndOvershootCm > 0.8f && gEndOvershootCm < 25.0f) {
+    Serial.print(F("  [Line End] backing ")); Serial.print(gEndOvershootCm, 1); Serial.println(F(" cm onto F"));
+    driveStraightHold(-gEndOvershootCm, getHeadingDeg());
+  }
+
+  // 2. Pose in the line frame: IRs on F, robot angle to the line from the gyro
+  float hLine  = gLineHdgAtEnd;
+  float axisHdg = hLine + LINE_END_TO_AXIS_DEG;
+  float rel    = (getHeadingDeg() - hLine) * D2R;
+  float axU    = -IR_FWD_CM * cosf(rel), axV = -IR_FWD_CM * sinf(rel);
+  float aDir   = LINE_END_TO_AXIS_DEG * D2R;
+  float pU     = T2_U_CM - AIM_BEFORE_T2_CM * cosf(aDir);
+  float pV     = T2_V_CM - AIM_BEFORE_T2_CM * sinf(aDir);
+  float aimHdg = hLine + atan2f(pV - axV, pU - axU) / D2R;
+  Serial.print(F("  [Aim] line hdg ")); Serial.print(hLine, 1);
+  Serial.print(F(" | pocket axis ")); Serial.print(axisHdg, 1);
+  Serial.print(F(" | aim ")); Serial.println(aimHdg, 1);
+  if (!turnToHeading(aimHdg, true)) return;
+
+  // 3. Drive in: aim, then rail lock, stop with the front ultrasonic
+  float off = railLockDrive(aimHdg, axisHdg, 45.0f);
+
+  // 4. Still off centre? Back out 10 cm along the axis and come in again (once)
+  if (!timeUp() && raceSecondsLeft() > 9.0f && off != 99.0f && fabsf(off) > RAIL_CENTER_TOL_CM) {
+    Serial.print(F("  [Rail-Lock] parked ")); Serial.print(off, 1); Serial.println(F(" cm off centre -> re-entry"));
+    turnToHeading(axisHdg, true);
+    driveStraightHold(-16.0f, axisHdg);                                           // back out along the axis
+    float a = constrain(atan2f(off, 10.0f) / D2R, -35.0f, 35.0f);                // diagonal that cancels the offset
+    turnToHeading(axisHdg - a, true);
+    driveStraightHold(10.0f / cosf(a * D2R), axisHdg - a, T2_PARK_STOP_CM + 3.0f);
+    turnToHeading(axisHdg, true);                                                 // straighten, then dock again
+    off = railLockDrive(axisHdg, axisHdg, 14.0f);
+  }
+  if (!timeUp()) turnToHeading(axisHdg, true);           // square to the rails
+
+  // 5. Square to the back wall: it is perpendicular to the pocket, so the
+  //    shortest front reading in a +/-8 deg sweep is the exact pocket heading
+  if (!timeUp() && raceSecondsLeft() > 5.0f) {
+    float sx[5], sy[5]; int n = 0;
+    for (int k = -2; k <= 2 && !timeUp(); k++) {
+      if (!turnToHeading(axisHdg + 4.0f * k, true)) break;
+      delay(40);
+      float f = readUltrasonicMedian(F_TRIG, F_ECHO, 5, 6000UL);
+      if (f < 40.0f) { sx[n] = getHeadingDeg() - axisHdg; sy[n] = f; n++; }
+    }
+    float v = 0.0f;
+    if (n >= 3 && fitQuadraticMin(sx, sy, n, v)) axisHdg += constrain(v, -8.0f, 8.0f);
+    turnToHeading(axisHdg, true);
+  }
+  stopMotors();
+  Serial.print(F(">>> [TARGET 2 PARKED!] centre offset ")); Serial.print(off, 1);
+  Serial.println(F(" cm. MISSION COMPLETE! <<<"));
 }
 
 // ============================================================================
@@ -771,8 +1450,24 @@ void setup() {
 
   Serial.begin(115200);
   delay(500);
-  resetEncoders();
-  followLine(true);          // 3 s countdown, then follows until the line end / a key
+#if USE_GYRO
+  unsigned long tWait = millis();                // core 1 calibrates the gyro (keep still!)
+  while (!gyroReady && (millis() - tWait < 7000UL)) {
+    digitalWrite(LED_BUILTIN, (millis() / 100) % 2);
+    delay(20);
+  }
+  lastSeenHeartbeat = gyroHeartbeat;
+  lastHeartbeatMs   = millis();
+  Serial.println(gyroHwOk ? F("[GYRO] MPU6050 OK - heading from the gyro")
+                          : F("[GYRO] MPU6050 NOT FOUND - using encoders (check SDA GP20 / SCL GP21)"));
+#endif
+  resetHeadingAndEncoders(true);                 // zero heading (quick re-cal while still)
+  bool atEnd = followLine(true);                 // 3 s countdown, then follows until the line end / a key
+#if GO_TO_T2
+  if (atEnd) runPhase6_PinpointT2();
+  else Serial.println(F("[T2] skipped: line end not confirmed"));
+#endif
+  (void)atEnd;
   releaseMotors();
 }
 
